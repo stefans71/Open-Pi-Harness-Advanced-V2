@@ -67,7 +67,13 @@ npm run build:workflows
 
 ### Link Extensions
 
-Symlink each extension into PI's extension directory:
+Run the setup script to create symlinks:
+
+```bash
+bash scripts/setup.sh
+```
+
+Or manually symlink each extension:
 
 ```bash
 mkdir -p ~/.pi/agent/extensions
@@ -77,13 +83,19 @@ ln -s $(pwd)/extensions/pi-skills ~/.pi/agent/extensions/pi-skills
 ln -s $(pwd)/extensions/pi-workflows ~/.pi/agent/extensions/pi-workflows
 ```
 
-### Configure pi-memory
+### Configure Your Model
 
-Edit `extensions/pi-memory/src/config.ts` to point at your servers:
+Choose and configure an inference backend. See [`docs/llm-setups/`](docs/llm-setups/) for detailed guides covering different models and GPUs.
 
-- `shared.generationUrl` -- generation endpoint (default: `http://localhost:11434`)
-- `shared.embeddingUrl` -- embedding endpoint (default: `http://localhost:8081`)
-- `shared.embeddingDimension` -- must match your embedding model (768 for nomic-embed-text)
+Edit `~/.pi/agent/models.json` with your model's endpoint — see the setup guide for the exact config.
+
+### Configure pi-memory (Optional)
+
+pi-memory defaults to `localhost:11434` (generation) and `localhost:8081` (embeddings). Override via config file at `.pi/extensions/pi-memory/config.json` or `~/.pi/agent/extensions/pi-memory/config.json`.
+
+### Using on Your Own Projects
+
+See [`docs/PROJECT-USAGE.md`](docs/PROJECT-USAGE.md) for how to use PI Agent on separate projects, including the recommended dev/stable setup for extension developers.
 
 ## Extensions
 
@@ -161,11 +173,19 @@ Thirteen bundled workflows in `.pi/workflows/`:
 | `trace-gen` | Structured task execution for fine-tuning trace generation |
 | `web-design` | Design-first frontend workflow: intent, tokens, inventory, build, review |
 
+## Documentation
+
+| Doc | Description |
+|-----|-------------|
+| [`docs/PROJECT-USAGE.md`](docs/PROJECT-USAGE.md) | How to use PI Agent on your own projects |
+| [`docs/llm-setups/`](docs/llm-setups/) | Model/GPU setup guides (Qwen 3.6 MTP, VL web-design, DeepSeek V4) |
+| [`.pi/METHODOLOGY.md`](.pi/METHODOLOGY.md) | Practical playbook for using PI workflows on new projects |
+
 ## Deployment
 
-For GPU cloud deployment (e.g., AutoDL with RTX 5090), see `scripts/sync-autodl.sh` for rsync-based deployment. The script syncs the project to a remote server and can be wired as a post-commit hook.
+For GPU cloud deployment, see `scripts/sync-autodl.sh` for rsync-based deployment. The script syncs the project to a remote server and can be wired as a post-commit hook.
 
-Typical setup: llama-server with a quantized model on GPU (port 11434) + a second llama-server with nomic-embed-text on CPU (port 8081).
+Typical setup: llama-server with a quantized model on GPU (port 11434) + a second llama-server with nomic-embed-text on CPU (port 8081). See [`docs/llm-setups/`](docs/llm-setups/) for specific configurations.
 
 ## License
 

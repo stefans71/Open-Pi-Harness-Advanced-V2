@@ -153,6 +153,7 @@ Config file lookup: `.pi/extensions/pi-memory/config.json` (project) or `~/.pi/a
 - **pi.exec after session replacement**: Calls `runtime.assertActive()` and throws. Executor uses `child_process.spawn` directly for bash nodes
 - **pi.appendEntry after session replacement**: Also guarded by `assertActive()`. Executor uses try/catch and falls back to filesystem-only `events.jsonl` logging
 - **DAG cycle detection**: `buildDag()` validates that processed count equals total nodes; throws on cycles
+- **AutoDL setup-pi.sh symlinks**: The `setup-pi.sh` script on AutoDL creates extension symlinks pointing at `/root/autodl-tmp/pi-modular/`. After syncing V2, update the target to `/root/autodl-tmp/open-pi-harness/` or re-run with updated paths
 
 ## Key Constraints
 
@@ -165,3 +166,6 @@ Config file lookup: `.pi/extensions/pi-memory/config.json` (project) or `~/.pi/a
 ## Reference Documents
 
 - `.pi/METHODOLOGY.md` -- practical playbook for using PI Agent with new projects
+- `docs/PROJECT-USAGE.md` -- how to use PI Agent on your own projects (dev/stable setup)
+- `docs/llm-setups/` -- model/GPU setup guides (Qwen 3.6 MTP, VL web-design, DeepSeek V4)
+- `docs/personal/AUTODL-SETUP.md` -- personal AutoDL deployment reference
