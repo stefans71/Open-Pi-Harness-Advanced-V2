@@ -5,6 +5,22 @@ Dependency-aware workflow execution with conditional routing, loop nodes, and st
 **Source:** [Archon](https://github.com/coleam00/Archon) — DAG executor, conditional routing
 **Phase:** 4 (4a: DAG + validation, 4b: loops + structured output)
 
+## What Is a DAG?
+
+A **DAG** (Directed Acyclic Graph) is a way of organizing steps where each step declares which other steps it depends on, and no step can depend on itself in a circle. "Directed" means dependencies flow one way (A must finish before B). "Acyclic" means there are no loops in the dependency chain (A → B → C → A would be invalid).
+
+In practice: instead of "run step 1, then step 2, then step 3" (a flat list), a DAG says "step 3 needs steps 1 and 2 to finish first, but steps 1 and 2 don't depend on each other." This lets workflows branch, skip steps conditionally, and merge results — the engine figures out the right execution order automatically.
+
+```
+Flat list (V1):          DAG (V2):
+
+  1 → 2 → 3 → 4           1
+                          / \
+                         2   3   (2 and 3 are independent)
+                          \ /
+                           4     (4 waits for both)
+```
+
 ## Overview
 
 V1 ran nodes in a flat sequential loop — every node ran, in order, unconditionally. V2 adds dependency-aware scheduling so workflows can express branching, conditional routing, and iteration.
