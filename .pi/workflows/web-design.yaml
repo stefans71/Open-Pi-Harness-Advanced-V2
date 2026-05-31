@@ -324,6 +324,23 @@ nodes:
       Overall score 1-10:
         10 = production-ready, 7 = acceptable v1, 5 = needs work, below 5 = reject
 
+      MODEL AWARENESS:
+      You are running as $MODEL_NAME (size: $MODEL_SIZE, context: $MODEL_CONTEXT tokens, vision: $MODEL_VISION).
+
+      Adapt your review depth to your capabilities:
+      - small (sub-9B): focus on structural correctness (HTML semantics, prop types, token usage,
+        build passes). Skip nuanced visual design critique — flag items you are uncertain about and
+        recommend the user verify visually or with a larger model.
+      - medium (9B-35B): full design conformance review including domain-specificity, intent
+        alignment, color harmony, and spacing rhythm.
+      - large (36B+): full review plus architectural critique (component composition, state
+        management patterns, performance implications).
+      - unknown: treat as medium — give full review but note that model capabilities could not
+        be determined, so visual/subjective assessments may be less reliable.
+
+      If $ARTIFACTS_DIR/vl-critique.md exists (from a vision model): incorporate those
+      visual findings into your scoring.
+
       Write to $ARTIFACTS_DIR/review-report.md.
       End with: "RECOMMENDATION: APPROVE (score N/10)" or "RECOMMENDATION: REJECT (score N/10) - [reason]"
 
@@ -366,6 +383,15 @@ nodes:
           - Make the surgical change
           - Run: bun run typecheck 2>&1 | tail -5
           - Append to $ARTIFACTS_DIR/rework-summary.md: "Fixed: [file:line] - [what changed]"
+
+        MODEL AWARENESS:
+        You are $MODEL_NAME (size: $MODEL_SIZE).
+        - small (sub-9B): fix only concrete FAIL items (TypeScript errors, missing tokens, wrong
+          HTML elements). Do not attempt subjective design improvements — self-critique at this
+          size tends to degrade output quality.
+        - medium or large (9B+): fix all FAIL items and improve WARN items where you are
+          confident in the improvement.
+        - unknown: fix FAIL items. Attempt WARN improvements but flag uncertainty.
 
         When done append: "Rework complete. N items fixed."
 

@@ -1,0 +1,100 @@
+diff --git a/.pi/workflows/web-design.yaml b/.pi/workflows/web-design.yaml
+index 093c39d..7a53376 100644
+--- a/.pi/workflows/web-design.yaml
++++ b/.pi/workflows/web-design.yaml
+@@ -324,6 +324,23 @@ nodes:
+       Overall score 1-10:
+         10 = production-ready, 7 = acceptable v1, 5 = needs work, below 5 = reject
+ 
++      MODEL AWARENESS:
++      You are running as $MODEL_NAME (size: $MODEL_SIZE, context: $MODEL_CONTEXT tokens, vision: $MODEL_VISION).
++
++      Adapt your review depth to your capabilities:
++      - small (sub-9B): focus on structural correctness (HTML semantics, prop types, token usage,
++        build passes). Skip nuanced visual design critique — flag items you are uncertain about and
++        recommend the user verify visually or with a larger model.
++      - medium (9B-35B): full design conformance review including domain-specificity, intent
++        alignment, color harmony, and spacing rhythm.
++      - large (36B+): full review plus architectural critique (component composition, state
++        management patterns, performance implications).
++      - unknown: treat as medium — give full review but note that model capabilities could not
++        be determined, so visual/subjective assessments may be less reliable.
++
++      If $ARTIFACTS_DIR/vl-critique.md exists (from a vision model): incorporate those
++      visual findings into your scoring.
++
+       Write to $ARTIFACTS_DIR/review-report.md.
+       End with: "RECOMMENDATION: APPROVE (score N/10)" or "RECOMMENDATION: REJECT (score N/10) - [reason]"
+ 
+@@ -367,6 +384,15 @@ nodes:
+           - Run: bun run typecheck 2>&1 | tail -5
+           - Append to $ARTIFACTS_DIR/rework-summary.md: "Fixed: [file:line] - [what changed]"
+ 
++        MODEL AWARENESS:
++        You are $MODEL_NAME (size: $MODEL_SIZE).
++        - small (sub-9B): fix only concrete FAIL items (TypeScript errors, missing tokens, wrong
++          HTML elements). Do not attempt subjective design improvements — self-critique at this
++          size tends to degrade output quality.
++        - medium or large (9B+): fix all FAIL items and improve WARN items where you are
++          confident in the improvement.
++        - unknown: fix FAIL items. Attempt WARN improvements but flag uncertainty.
++
+         When done append: "Rework complete. N items fixed."
+ 
+   - id: verify-rework
+diff --git a/extensions/pi-workflows/src/executor.ts b/extensions/pi-workflows/src/executor.ts
+index 2d6b5bd..aba75fa 100644
+--- a/extensions/pi-workflows/src/executor.ts
++++ b/extensions/pi-workflows/src/executor.ts
+@@ -118,6 +118,7 @@ import { join, isAbsolute } from "node:path";
+ import type { ExtensionAPI, ExtensionCommandContext, ReplacedSessionContext } from "@mariozechner/pi-coding-agent";
+ import type { ApprovalNode, CancelNode, LoopNode, PromptNode, WorkflowDefinition, WorkflowNode, WorkflowState } from "./schema.js";
+ import { buildDag, evaluateCondition, type DagStep } from "./dag.js";
++import { getModelProfile, type ModelProfile } from "./model-info.js";
+ 
+ function escapeRegex(s: string): string {
+ 	return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+@@ -167,6 +168,7 @@ export class WorkflowExecutor {
+ 	private resolvedArtifacts: Map<string, string[]> = new Map();
+ 	private currentUserMessage: string | null = null;
+ 	private currentOutputFormat: Record<string, unknown> | null = null;
++	private modelProfile: ModelProfile | null = null;
+ 
+ 	private _currentNodeId = "unknown";
+ 	get currentNodeId() { return this._currentNodeId; }
+@@ -286,6 +288,9 @@ export class WorkflowExecutor {
+ 		};
+ 		(globalThis as Record<string, unknown>).__piWorkflowRunning = true;
+ 
++		const ctxWithModel = initialCtx as { model?: { id?: string; name?: string; contextWindow?: number; input?: string[]; reasoning?: boolean } };
++		this.modelProfile = getModelProfile(ctxWithModel.model);
++
+ 		const workflowStartPayload = {
+ 			event: "workflow_start",
+ 			workflow: workflow.name,
+@@ -294,6 +299,10 @@ export class WorkflowExecutor {
+ 			userMessage,
+ 			artifactsDir: this.artifactsDir,
+ 			timestamp: Date.now(),
++			model: this.modelProfile.id,
++			modelSize: this.modelProfile.sizeClass,
++			modelContext: this.modelProfile.contextWindow,
++			modelVision: this.modelProfile.supportsVision,
+ 		};
+ 		// pi is still the active runtime here (initial ctx, no session replacement yet).
+ 		this.pi.appendEntry("workflow_metadata", workflowStartPayload);
+@@ -1456,6 +1465,14 @@ export class WorkflowExecutor {
+ 			if (iteration !== undefined) {
+ 				result = result.replace(/\$ITERATION\b/g, String(iteration));
+ 			}
++			if (this.modelProfile) {
++				result = result
++					.replace(/\$MODEL_ID\b/g, this.modelProfile.id)
++					.replace(/\$MODEL_NAME\b/g, this.modelProfile.name)
++					.replace(/\$MODEL_SIZE\b/g, this.modelProfile.sizeClass)
++					.replace(/\$MODEL_CONTEXT\b/g, String(this.modelProfile.contextWindow))
++					.replace(/\$MODEL_VISION\b/g, String(this.modelProfile.supportsVision));
++			}
+ 			if (this.state) {
+ 				for (const [id, output] of this.state.outputs) {
+ 					const pattern = new RegExp(

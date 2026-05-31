@@ -118,6 +118,7 @@ import { join, isAbsolute } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext, ReplacedSessionContext } from "@mariozechner/pi-coding-agent";
 import type { ApprovalNode, CancelNode, LoopNode, PromptNode, WorkflowDefinition, WorkflowNode, WorkflowState } from "./schema.js";
 import { buildDag, evaluateCondition, type DagStep } from "./dag.js";
+import { getModelProfile, type ModelProfile } from "./model-info.js";
 
 function escapeRegex(s: string): string {
 	return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -167,6 +168,7 @@ export class WorkflowExecutor {
 	private resolvedArtifacts: Map<string, string[]> = new Map();
 	private currentUserMessage: string | null = null;
 	private currentOutputFormat: Record<string, unknown> | null = null;
+	private modelProfile: ModelProfile | null = null;
 
 	private _currentNodeId = "unknown";
 	get currentNodeId() { return this._currentNodeId; }
@@ -286,6 +288,9 @@ export class WorkflowExecutor {
 		};
 		(globalThis as Record<string, unknown>).__piWorkflowRunning = true;
 
+		const ctxWithModel = initialCtx as { model?: { id?: string; name?: string; contextWindow?: number; input?: string[]; reasoning?: boolean } };
+		this.modelProfile = getModelProfile(ctxWithModel.model);
+
 		const workflowStartPayload = {
 			event: "workflow_start",
 			workflow: workflow.name,
@@ -294,6 +299,10 @@ export class WorkflowExecutor {
 			userMessage,
 			artifactsDir: this.artifactsDir,
 			timestamp: Date.now(),
+			model: this.modelProfile.id,
+			modelSize: this.modelProfile.sizeClass,
+			modelContext: this.modelProfile.contextWindow,
+			modelVision: this.modelProfile.supportsVision,
 		};
 		// pi is still the active runtime here (initial ctx, no session replacement yet).
 		this.pi.appendEntry("workflow_metadata", workflowStartPayload);
@@ -1455,6 +1464,14 @@ export class WorkflowExecutor {
 				.replace(/\$REJECTION_REASON\b/g, this.rejectionReason ?? "");
 			if (iteration !== undefined) {
 				result = result.replace(/\$ITERATION\b/g, String(iteration));
+			}
+			if (this.modelProfile) {
+				result = result
+					.replace(/\$MODEL_ID\b/g, this.modelProfile.id)
+					.replace(/\$MODEL_NAME\b/g, this.modelProfile.name)
+					.replace(/\$MODEL_SIZE\b/g, this.modelProfile.sizeClass)
+					.replace(/\$MODEL_CONTEXT\b/g, String(this.modelProfile.contextWindow))
+					.replace(/\$MODEL_VISION\b/g, String(this.modelProfile.supportsVision));
 			}
 			if (this.state) {
 				for (const [id, output] of this.state.outputs) {
