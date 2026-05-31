@@ -376,6 +376,7 @@ Thirteen bundled workflows in `.pi/workflows/`:
 
 | Doc | Description |
 |-----|-------------|
+| [`docs/features/`](docs/features/) | Feature guides with diagrams: self-improvement loop, guardrails, DAG workflows, memory, GitHub pipelines |
 | [`docs/PROJECT-USAGE.md`](docs/PROJECT-USAGE.md) | How to use PI Agent on your own projects |
 | [`docs/llm-setups/`](docs/llm-setups/) | Model/GPU setup guides (Qwen 3.6 MTP, VL web-design, DeepSeek V4) |
 | [`.pi/METHODOLOGY.md`](.pi/METHODOLOGY.md) | Practical playbook for using PI workflows on new projects |
