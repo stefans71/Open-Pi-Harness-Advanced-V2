@@ -1,0 +1,38 @@
+name: smoke-executor
+description: minimal end-to-end check of artifacts + fresh_context + approval
+nodes:
+  - id: write
+    type: prompt
+    allowed_tools: [write]
+    prompt: |
+      Write the string "hello phase 1" to $ARTIFACTS_DIR/marker.txt.
+      Output the file path only.
+
+  - id: read-fresh
+    type: prompt
+    fresh_context: true
+    allowed_tools: [read]
+    prompt: |
+      Read $ARTIFACTS_DIR/marker.txt and print its contents.
+      You should have NO memory of writing it.
+
+  - id: check-bash
+    type: bash
+    command: |
+      echo "ARTIFACTS_DIR=$ARTIFACTS_DIR"
+      ls -la "$ARTIFACTS_DIR"
+      cat "$ARTIFACTS_DIR/marker.txt"
+
+  - id: gate
+    type: approval
+    capture_response: true
+    on_reject: continue
+    message: "Reject this with reason 'test rejection feedback' to verify capture."
+
+  - id: echo-reason
+    type: prompt
+    fresh_context: true
+    allowed_tools: []
+    prompt: |
+      The previous gate captured this rejection reason: $REJECTION_REASON
+      Echo it back verbatim. Nothing else.

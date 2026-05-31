@@ -1,0 +1,15 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.vite*/
+tmp/
+
+# PI runtime state (not definitions)
+.pi/memory.db
+.pi/memory.db-journal
+.pi/skills/
+.pi/workflow-artifacts/
+.pi/extensions/
+
+# Sync config
+.autodl-port

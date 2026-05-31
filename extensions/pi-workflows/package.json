@@ -1,0 +1,21 @@
+{
+  "name": "pi-workflows",
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Sequential YAML workflow runner for PI Agent",
+  "pi": {
+    "extensions": [
+      "src/index.ts"
+    ]
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}

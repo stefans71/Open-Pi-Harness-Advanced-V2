@@ -1,0 +1,179 @@
+name: smart-review
+description: |
+  Conditional multi-agent code review. Scopes the diff to determine which
+  review agents are needed, runs them in parallel via DAG, then synthesizes
+  findings into a single prioritized report.
+  Usage: /workflow run smart-review "review the changes on this branch"
+
+nodes:
+  - id: preflight
+    type: bash
+    command: |
+      if ! command -v gh &>/dev/null; then
+        echo "ERROR: gh CLI not found. Install: https://cli.github.com/"
+        exit 1
+      fi
+      if ! gh auth status &>/dev/null; then
+        echo "ERROR: gh CLI not authenticated. Run: gh auth login"
+        exit 1
+      fi
+      echo "gh CLI: $(gh --version | head -1)"
+      echo "Auth: $(gh auth status 2>&1 | head -1)"
+
+  - id: collect-diff
+    type: bash
+    depends_on: [preflight]
+    command: |
+      BASE_REF=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/||')
+      if [ -z "$BASE_REF" ]; then
+        for candidate in origin/main origin/master; do
+          if git rev-parse --verify "$candidate" &>/dev/null; then
+            BASE_REF="$candidate"
+            break
+          fi
+        done
+      fi
+
+      if [ -n "$BASE_REF" ] && git diff "${BASE_REF}...HEAD" > "$ARTIFACTS_DIR/diff.patch" 2>/dev/null; then
+        echo "Diff collected against $BASE_REF: $(wc -l < "$ARTIFACTS_DIR/diff.patch") lines"
+        git log "${BASE_REF}..HEAD" --oneline > "$ARTIFACTS_DIR/commits.txt" 2>/dev/null
+      else
+        echo "WARNING: Could not determine base branch. Falling back to last commit only."
+        git diff HEAD~1 > "$ARTIFACTS_DIR/diff.patch"
+        git log -1 --oneline > "$ARTIFACTS_DIR/commits.txt"
+        echo "Diff collected (last commit only): $(wc -l < "$ARTIFACTS_DIR/diff.patch") lines"
+      fi
+      echo "Commits: $(wc -l < "$ARTIFACTS_DIR/commits.txt")"
+
+  - id: scope
+    type: prompt
+    depends_on: [collect-diff]
+    allowed_tools: [read]
+    output_format:
+      type: object
+      properties:
+        needs_error_review:
+          type: boolean
+        needs_test_review:
+          type: boolean
+        needs_docs_review:
+          type: boolean
+      required: [needs_error_review, needs_test_review, needs_docs_review]
+    prompt: |
+      Read $ARTIFACTS_DIR/diff.patch and $ARTIFACTS_DIR/commits.txt.
+
+      Analyze the diff to determine which specialized review agents are needed:
+
+      - needs_error_review: true if the diff touches error handling, try/catch blocks,
+        async/await patterns, or code that could throw. Also true if new error paths
+        are introduced without proper handling.
+      - needs_test_review: true if the diff adds new functionality, modifies existing
+        behavior, or touches files that should have corresponding tests.
+      - needs_docs_review: true if the diff changes public APIs, adds new features,
+        modifies configuration, or changes user-facing behavior.
+
+      A code review agent always runs regardless. Only enable specialized agents
+      when the diff genuinely needs them.
+
+  - id: code-review
+    type: prompt
+    depends_on: [scope]
+    fresh_context: true
+    allowed_tools: [read, grep, find, bash]
+    prompt: |
+      You are a senior code reviewer. Read $ARTIFACTS_DIR/diff.patch.
+
+      Review for:
+      - Correctness: logic errors, off-by-one, null/undefined handling
+      - Security: injection risks, path traversal, unsafe deserialization
+      - Performance: unnecessary allocations, O(n²) patterns, missing caching
+      - Style: naming, consistency with surrounding code, dead code
+
+      Write $ARTIFACTS_DIR/code-review.md with findings. For each issue:
+      - File and line reference
+      - Severity (CRITICAL / HIGH / MEDIUM / LOW)
+      - What's wrong and how to fix it
+
+  - id: error-review
+    type: prompt
+    depends_on: [scope]
+    when: "$scope.output.needs_error_review == true"
+    fresh_context: true
+    allowed_tools: [read, grep, find]
+    prompt: |
+      You are an error-handling specialist. Read $ARTIFACTS_DIR/diff.patch.
+
+      Review for:
+      - Missing try/catch around operations that can throw
+      - Unhandled promise rejections (missing .catch or await without try)
+      - Swallowed errors (empty catch blocks with no logging)
+      - Error messages that leak internal details
+      - Missing error propagation (catching without re-throwing when appropriate)
+
+      Write $ARTIFACTS_DIR/error-review.md with findings.
+
+  - id: test-review
+    type: prompt
+    depends_on: [scope]
+    when: "$scope.output.needs_test_review == true"
+    fresh_context: true
+    allowed_tools: [read, grep, find]
+    prompt: |
+      You are a test coverage analyst. Read $ARTIFACTS_DIR/diff.patch.
+
+      Review for:
+      - New code paths without corresponding tests
+      - Edge cases not covered (empty inputs, boundary values, error paths)
+      - Assertion quality (testing behavior, not implementation details)
+      - Test isolation (no shared state, no order dependencies)
+      - Missing regression tests for bug fixes
+
+      Write $ARTIFACTS_DIR/test-review.md with findings.
+
+  - id: docs-review
+    type: prompt
+    depends_on: [scope]
+    when: "$scope.output.needs_docs_review == true"
+    fresh_context: true
+    allowed_tools: [read, grep, find]
+    prompt: |
+      You are a documentation reviewer. Read $ARTIFACTS_DIR/diff.patch.
+
+      Review for:
+      - Public API changes without updated documentation
+      - New features missing usage examples
+      - Outdated README sections
+      - Missing or incorrect JSDoc/inline comments for complex logic
+      - Changelog entries needed
+
+      Write $ARTIFACTS_DIR/docs-review.md with findings.
+
+  - id: synthesize
+    type: prompt
+    depends_on: [code-review, error-review, test-review, docs-review]
+    fresh_context: true
+    allowed_tools: [read, write]
+    prompt: |
+      You are a review lead synthesizing findings from multiple reviewers.
+
+      Read all available review files:
+      - $ARTIFACTS_DIR/code-review.md (always present)
+      - $ARTIFACTS_DIR/error-review.md (if error review ran)
+      - $ARTIFACTS_DIR/test-review.md (if test review ran)
+      - $ARTIFACTS_DIR/docs-review.md (if docs review ran)
+
+      Produce a single consolidated review report at $ARTIFACTS_DIR/review-report.md:
+
+      ## Review Summary
+      One paragraph overall assessment.
+
+      ## Critical/High Findings
+      Must-fix items before merge, ordered by severity.
+
+      ## Medium/Low Findings
+      Suggestions and improvements, ordered by impact.
+
+      ## Verdict
+      APPROVE, REQUEST_CHANGES, or NEEDS_DISCUSSION with a one-line reason.
+
+      Output the report as your response.

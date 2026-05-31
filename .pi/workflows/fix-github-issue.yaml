@@ -1,0 +1,289 @@
+name: fix-github-issue
+description: |
+  End-to-end GitHub issue resolution pipeline. Fetches the issue, classifies
+  it as bug or feature, routes through the appropriate analysis path, implements
+  a fix in a loop, validates, prepares a local branch with commits, runs review,
+  self-fixes findings, and reports back on the issue. The user pushes manually.
+  Usage: /workflow run fix-github-issue "#123" or /workflow run fix-github-issue "owner/repo#123"
+
+nodes:
+  - id: preflight
+    type: bash
+    command: |
+      if ! command -v gh &>/dev/null; then
+        echo "ERROR: gh CLI not found. Install: https://cli.github.com/"
+        exit 1
+      fi
+      if ! gh auth status &>/dev/null; then
+        echo "ERROR: gh CLI not authenticated. Run: gh auth login"
+        exit 1
+      fi
+      echo "gh CLI: $(gh --version | head -1)"
+      echo "Auth: $(gh auth status 2>&1 | head -1)"
+
+  - id: fetch-issue
+    type: bash
+    depends_on: [preflight]
+    command: |
+      ISSUE_REF="$USER_MESSAGE"
+      ISSUE_REF=$(echo "$ISSUE_REF" | sed 's/^#//')
+
+      if echo "$ISSUE_REF" | grep -q '/'; then
+        REPO=$(echo "$ISSUE_REF" | sed 's/#.*$//')
+        NUM=$(echo "$ISSUE_REF" | sed 's/^.*#//')
+        gh issue view "$NUM" --repo "$REPO" --json title,body,labels,comments > "$ARTIFACTS_DIR/issue.json"
+      else
+        gh issue view "$ISSUE_REF" --json title,body,labels,comments > "$ARTIFACTS_DIR/issue.json"
+      fi
+
+      echo "Issue fetched:"
+      cat "$ARTIFACTS_DIR/issue.json" | head -50
+
+  - id: classify
+    type: prompt
+    depends_on: [fetch-issue]
+    allowed_tools: [read]
+    output_format:
+      type: object
+      properties:
+        issue_type:
+          type: string
+          enum: [bug, feature]
+        summary:
+          type: string
+        affected_areas:
+          type: array
+          items:
+            type: string
+      required: [issue_type, summary, affected_areas]
+    prompt: |
+      Read $ARTIFACTS_DIR/issue.json.
+
+      Classify this issue:
+      - issue_type: "bug" if it reports broken behavior, regression, or error.
+        "feature" if it requests new functionality or enhancement.
+      - summary: one-sentence summary of what needs to be done.
+      - affected_areas: list of likely affected files/directories/modules.
+
+      Base your classification on the issue title, body, and labels.
+
+  - id: investigate
+    type: prompt
+    depends_on: [classify]
+    when: "$classify.output.issue_type == 'bug'"
+    fresh_context: true
+    allowed_tools: [read, grep, find, bash]
+    prompt: |
+      Read $ARTIFACTS_DIR/issue.json for the bug report.
+
+      Investigate the bug:
+      1. Read the affected files identified in the issue
+      2. Try to reproduce the bug — run tests, execute the failing code path
+      3. Identify the root cause — trace through the code, check recent changes
+      4. Document your findings
+
+      Write $ARTIFACTS_DIR/analysis.md with:
+      - Root cause (file:line, what's wrong)
+      - Reproduction steps (commands you ran)
+      - Proposed fix (what specifically needs to change)
+
+  - id: plan
+    type: prompt
+    depends_on: [classify]
+    when: "$classify.output.issue_type != 'bug'"
+    fresh_context: true
+    allowed_tools: [read, grep, find]
+    prompt: |
+      Read $ARTIFACTS_DIR/issue.json for the feature request.
+
+      Plan the implementation:
+      1. Read existing code in the affected areas
+      2. Identify integration points and dependencies
+      3. Design the minimal implementation that satisfies the request
+      4. Identify what tests are needed
+
+      Write $ARTIFACTS_DIR/analysis.md with:
+      - Implementation plan (step-by-step)
+      - Files to create/modify
+      - Test strategy
+      - Risks or open questions
+
+  - id: implement
+    type: loop
+    depends_on: [investigate, plan]
+    max_iterations: 10
+    until: "IMPLEMENTATION_COMPLETE"
+    fresh_context: true
+    allowed_tools: [read, write, edit, grep, find, bash]
+    prompt: |
+      Read $ARTIFACTS_DIR/analysis.md for the plan/investigation findings.
+      Read $ARTIFACTS_DIR/issue.json for the original issue.
+
+      Implement the changes. Follow the plan from analysis.md.
+
+      Iteration $ITERATION:
+      - If this is iteration 0: start implementing from the plan
+      - If this is a later iteration: read your previous work, continue or fix issues
+
+      When the implementation is complete and working:
+      - All changes are saved to disk
+      - Basic manual verification passes
+      - Say IMPLEMENTATION_COMPLETE as the last line
+
+      If you need more iterations, describe what remains to be done.
+
+  - id: validate
+    type: bash
+    depends_on: [implement]
+    allow_failure: true
+    command: |
+      echo "=== Validation ==="
+      ERRORS=0
+
+      if [ -f "package.json" ]; then
+        echo "--- TypeScript check ---"
+        npx tsc --noEmit 2>&1 || ERRORS=$((ERRORS + 1))
+
+        echo "--- Tests ---"
+        npm test 2>&1 || ERRORS=$((ERRORS + 1))
+      fi
+
+      if [ -f "Cargo.toml" ]; then
+        echo "--- Cargo check ---"
+        cargo check 2>&1 || ERRORS=$((ERRORS + 1))
+
+        echo "--- Cargo test ---"
+        cargo test 2>&1 || ERRORS=$((ERRORS + 1))
+      fi
+
+      echo ""
+      echo "Validation errors: $ERRORS"
+      if [ "$ERRORS" -gt 0 ]; then
+        echo "STATUS: VALIDATION_FAILED"
+      else
+        echo "STATUS: VALIDATION_PASSED"
+      fi
+
+  - id: create-pr
+    type: prompt
+    depends_on: [validate]
+    fresh_context: true
+    allowed_tools: [read, bash]
+    prompt: |
+      Read $ARTIFACTS_DIR/issue.json for the original issue.
+      Read $ARTIFACTS_DIR/analysis.md for what was planned.
+
+      Prepare a branch and commit for the changes (DO NOT push):
+
+      1. Create a descriptive branch name from the issue title
+      2. Stage and commit the changes with a clear commit message referencing the issue
+
+      DO NOT run git push or gh pr create. The user will push and create the PR manually.
+
+      Prepare a PR description the user can copy:
+      - Title: concise summary
+      - Body: "Fixes #<issue-number>" or "Closes #<issue-number>", brief summary, caveats
+
+      Report the branch name and suggest: git push -u origin <branch> && gh pr create --draft
+
+  - id: review
+    type: prompt
+    depends_on: [create-pr]
+    fresh_context: true
+    allowed_tools: [read, grep, find, bash]
+    prompt: |
+      Review the changes that were just committed.
+
+      Run: git diff HEAD~1 > $ARTIFACTS_DIR/pr-diff.patch
+
+      Then read $ARTIFACTS_DIR/pr-diff.patch and review for:
+      - Correctness: logic errors, edge cases, null handling
+      - Security: injection risks, unsafe patterns
+      - Style: consistency with surrounding code
+
+      Write $ARTIFACTS_DIR/review-findings.md with any issues found.
+      For each finding: file, line, severity, description, suggested fix.
+
+      If no issues found, write "No issues found — LGTM."
+
+  - id: self-fix
+    type: prompt
+    depends_on: [review]
+    fresh_context: true
+    allowed_tools: [read, write, edit, grep, find, bash]
+    prompt: |
+      Read $ARTIFACTS_DIR/review-findings.md.
+
+      If there are findings to address:
+      1. Fix each issue identified by the reviewer
+      2. Stage and commit the fixes: git add -A && git commit -m "fix: address review findings"
+
+      DO NOT run git push. The user will push manually.
+
+      If the review said "LGTM" or found no issues, skip fixing and just confirm.
+
+      Report what was fixed (if anything).
+
+  - id: revalidate
+    type: bash
+    depends_on: [self-fix]
+    allow_failure: true
+    command: |
+      echo "=== Re-validation after self-fix ==="
+      ERRORS=0
+
+      if [ -f "package.json" ]; then
+        echo "--- TypeScript check ---"
+        npx tsc --noEmit 2>&1 || ERRORS=$((ERRORS + 1))
+        echo "--- Tests ---"
+        npm test 2>&1 || ERRORS=$((ERRORS + 1))
+      fi
+
+      if [ -f "Cargo.toml" ]; then
+        echo "--- Cargo check ---"
+        cargo check 2>&1 || ERRORS=$((ERRORS + 1))
+        echo "--- Cargo test ---"
+        cargo test 2>&1 || ERRORS=$((ERRORS + 1))
+      fi
+
+      echo ""
+      echo "Validation errors: $ERRORS"
+      if [ "$ERRORS" -gt 0 ]; then
+        echo "STATUS: VALIDATION_FAILED"
+      else
+        echo "STATUS: VALIDATION_PASSED"
+      fi
+
+  - id: report
+    type: bash
+    depends_on: [revalidate]
+    command: |
+      ISSUE_REF="$USER_MESSAGE"
+      ISSUE_REF=$(echo "$ISSUE_REF" | sed 's/^#//')
+
+      REVALIDATE_STATUS=$(echo "$revalidate.output" | grep 'STATUS:' || echo 'See local validation output')
+      REVIEW_SUMMARY=$(head -1 "$ARTIFACTS_DIR/review-findings.md" 2>/dev/null || echo 'No review findings file')
+
+      COMMENT="## Automated Fix Report
+
+      A fix has been prepared locally. Push the branch and create a draft PR to apply it.
+
+      **Analysis:** See the commit messages and analysis artifacts for details.
+      **Validation:** $REVALIDATE_STATUS
+      **Review:** $REVIEW_SUMMARY
+
+      ---
+      _Generated by PI Agent fix-github-issue workflow_"
+
+      if echo "$ISSUE_REF" | grep -q '/'; then
+        REPO=$(echo "$ISSUE_REF" | sed 's/#.*$//')
+        NUM=$(echo "$ISSUE_REF" | sed 's/^.*#//')
+        gh issue comment "$NUM" --repo "$REPO" --body "$COMMENT" 2>/dev/null && echo "Comment posted on issue" || echo "Could not post comment (may need write access)"
+      else
+        gh issue comment "$ISSUE_REF" --body "$COMMENT" 2>/dev/null && echo "Comment posted on issue" || echo "Could not post comment (may need write access)"
+      fi
+
+      echo ""
+      echo "=== Pipeline Complete ==="
+      echo "Issue: $USER_MESSAGE"
+      echo "Artifacts: $ARTIFACTS_DIR/"

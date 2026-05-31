@@ -1,0 +1,198 @@
+name: adversarial-review
+description: |
+  GAN-inspired build → adversarial attack → revise cycle adapted for PI's single-model setup.
+  Planner writes a tight spec with testable success criteria. Generator builds defensively.
+  Evaluator attacks with strict 1-10 scoring. User gates an optional revision pass.
+  External-review bash node is a ready stub for DeepSeek/Codex integration.
+  Adapted from Cole's archon-adversarial-dev.yaml.
+  Usage: /workflow run adversarial-review "build a landing page for a SaaS tool"
+
+nodes:
+  # ── Phase 1: Spec ─────────────────────────────────────────────────────────
+  - id: spec
+    type: prompt
+    allowed_tools: [Read, Write, Glob, Grep]
+    prompt: |
+      You are a product planning expert. Write a precise, opinionated spec for this request.
+
+      ## Request
+      $USER_MESSAGE
+
+      Write to $ARTIFACTS_DIR/spec.md using the Write tool. Include ALL of these sections:
+
+      ### Product Overview
+      What it is, who it's for, core value proposition.
+
+      ### Tech Stack
+      Concrete choices — exact frameworks and libraries. No "a modern framework."
+
+      ### Design Language
+      Color hex codes, typography, spacing system, component patterns.
+
+      ### Feature List
+      All features, prioritized.
+
+      ### Success Criteria
+      8-12 specific, testable criteria the implementation MUST satisfy.
+      Each criterion must be concrete and verifiable — no vague language.
+      GOOD: "GET /api/items returns 200 with JSON array; each item has id (number), title (string), status (string), createdAt (ISO date)"
+      BAD: "the API works"
+
+  # ── Phase 2: Build ────────────────────────────────────────────────────────
+  - id: build
+    type: prompt
+    fresh_context: true
+    allowed_tools: [Read, Write, Edit, Bash, Glob, Grep]
+    prompt: |
+      You are a software engineer building production-quality code. An adversarial evaluator
+      will actively try to break your work — build defensively.
+
+      Read $ARTIFACTS_DIR/spec.md for the full spec and success criteria.
+
+      Rules:
+      - All code goes in $ARTIFACTS_DIR/app/
+      - Follow the spec's tech stack and design language exactly
+      - Build feature by feature: implement, verify it works, move on
+      - Test as you go: run the app, hit endpoints, check the UI renders
+      - Think adversarially: what will an attacker try? Edge cases, empty inputs, error paths
+      - Handle validation, error states, and boundary conditions explicitly
+
+      When done, write $ARTIFACTS_DIR/build-summary.md:
+      - What was built (feature list)
+      - How to start the app (exact commands from $ARTIFACTS_DIR/app/)
+      - Any known gaps or deferred items
+
+  # ── Phase 3: Adversarial Evaluation ──────────────────────────────────────
+  - id: evaluate
+    type: prompt
+    fresh_context: true
+    allowed_tools: [Read, Bash, Glob, Grep]
+    prompt: |
+      You are an ADVERSARIAL evaluator. Your mandate is to BREAK what was built.
+      You are not helpful. You are not generous. You are an attacker.
+
+      Read:
+      1. $ARTIFACTS_DIR/spec.md — the success criteria you must test against
+      2. $ARTIFACTS_DIR/build-summary.md — what the generator claims it built
+      3. All code in $ARTIFACTS_DIR/app/ — what actually exists on disk
+
+      For EACH criterion in the spec:
+      1. Read the relevant source code
+      2. Run the app — start servers, hit endpoints, render UI
+      3. Actively attack: invalid inputs, empty fields, edge cases, concurrent requests, error paths
+      4. Score 1-10 (strict): 9-10 = exceptional, 7-8 = solid, 5-6 = partial, 3-4 = weak, 1-2 = broken
+
+      A 7 means "genuinely meets the bar without reservations." Do not grade on a curve.
+      A 5 means "core functionality exists but has real gaps." Do not be generous.
+
+      Kill all background processes before finishing:
+        pkill -f "node|bun|python|npm|next|vite|webpack" 2>/dev/null || true
+
+      Write $ARTIFACTS_DIR/evaluation.md:
+      - Overall verdict: PASS (all criteria ≥ 7) or FAIL
+      - Score per criterion with exact findings (file:line refs, commands that failed, error text)
+      - Concrete fix list for any failed criteria (what specifically must change)
+
+      Final line of your response must be exactly: VERDICT: PASS or VERDICT: FAIL
+
+  # ── Phase 4: Check evaluation result ─────────────────────────────────────
+  - id: check-evaluation
+    type: bash
+    command: |
+      echo "=== Adversarial Evaluation ==="
+      cat "$ARTIFACTS_DIR/evaluation.md" 2>/dev/null || echo "(evaluation.md not found)"
+      echo ""
+      echo "=== Verdict ==="
+      grep -o "VERDICT: [A-Z]*" "$ARTIFACTS_DIR/evaluation.md" 2>/dev/null || echo "VERDICT: UNKNOWN"
+
+  # ── Phase 5: Gate — revise or ship? ──────────────────────────────────────
+  - id: gate-revise
+    type: approval
+    capture_response: true
+    on_reject: continue
+    message: "Approve to run a revision pass targeting the evaluator's findings. Reject to skip revision and proceed to report."
+
+  # ── Phase 6: Revision pass ────────────────────────────────────────────────
+  - id: revise
+    type: prompt
+    fresh_context: true
+    allowed_tools: [Read, Write, Edit, Bash, Glob, Grep]
+    prompt: |
+      You are a software engineer fixing issues found by an adversarial evaluator.
+
+      Read:
+      1. $ARTIFACTS_DIR/spec.md — original spec and success criteria
+      2. $ARTIFACTS_DIR/evaluation.md — evaluator findings and scores
+      3. All code in $ARTIFACTS_DIR/app/ — current implementation
+
+      Address EVERY issue the evaluator raised:
+      - Start with failed criteria (score < 7) — these are blockers
+      - For each: read the code, find the root cause, fix it
+      - Re-run the evaluator's exact attack scenario — verify it now passes
+      - Do not break passing criteria
+
+      Append a revision log to $ARTIFACTS_DIR/evaluation.md:
+      ## Revision Pass
+      - [criterion-name]: what was wrong, what was fixed, how verified
+
+  # ── Phase 7: External review (stub) ──────────────────────────────────────
+  # Replace the body below with real API calls when ready.
+  - id: external-review
+    type: bash
+    command: |
+      echo "=== External Review ==="
+      echo "Stub — replace with real API calls to add external model review."
+      echo ""
+      echo "DeepSeek example:"
+      echo "  curl https://api.deepseek.com/v1/chat/completions \\"
+      echo "    -H \"Authorization: Bearer \$DEEPSEEK_API_KEY\" \\"
+      echo "    -H \"Content-Type: application/json\" \\"
+      echo "    -d \"{\\\"model\\\":\\\"deepseek-coder\\\",\\\"messages\\\":[{\\\"role\\\":\\\"user\\\",\\\"content\\\":\\\"$(head -80 \$ARTIFACTS_DIR/evaluation.md)\\\"}]}\""
+      echo ""
+      echo "OpenAI / o4-mini example:"
+      echo "  curl https://api.openai.com/v1/chat/completions \\"
+      echo "    -H \"Authorization: Bearer \$OPENAI_API_KEY\" \\"
+      echo "    -H \"Content-Type: application/json\" \\"
+      echo "    -d \"{\\\"model\\\":\\\"o4-mini\\\",\\\"messages\\\":[{\\\"role\\\":\\\"user\\\",\\\"content\\\":\\\"$(head -80 \$ARTIFACTS_DIR/evaluation.md)\\\"}]}\""
+      echo ""
+      echo "No external API configured — skipping."
+      printf "# External Review\nStatus: stub — no external API configured.\nTo enable: replace the external-review bash node with real API calls.\n" \
+        > "$ARTIFACTS_DIR/external-review.md"
+
+  # ── Phase 8: Report ───────────────────────────────────────────────────────
+  - id: report
+    type: prompt
+    fresh_context: true
+    allowed_tools: [Read, Write, Glob]
+    prompt: |
+      You are a project reporter. Summarize this adversarial review run clearly and concisely.
+
+      Read all of these files:
+      - $ARTIFACTS_DIR/spec.md — original spec and criteria
+      - $ARTIFACTS_DIR/build-summary.md — what was built
+      - $ARTIFACTS_DIR/evaluation.md — adversarial evaluation + revision log (if any)
+      - $ARTIFACTS_DIR/external-review.md — external review status
+
+      Write a report structured as follows:
+
+      ### Summary
+      One paragraph: what was built, final verdict, overall quality.
+
+      ### Criteria Scorecard
+      | Criterion | Score | Status |
+      |-----------|-------|--------|
+      (one row per criterion from evaluation.md)
+
+      ### Key Findings
+      Top 3 issues the evaluator caught. What they reveal about the implementation.
+
+      ### Revision Impact
+      If a revision pass ran: what changed, which scores improved.
+
+      ### How to Run
+      Exact commands to start the app from $ARTIFACTS_DIR/app/.
+
+      ### Next Steps
+      What remains to reach production quality.
+
+      Write the report to $ARTIFACTS_DIR/report.md AND output it as your response.

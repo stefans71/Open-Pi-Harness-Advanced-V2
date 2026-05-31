@@ -1,0 +1,35 @@
+name: code-task
+description: Implement a coding task — plan, code, verify
+
+nodes:
+  - id: plan
+    type: prompt
+    prompt: |
+      Task: $USER_MESSAGE
+
+      Before writing any code, investigate the codebase to understand the relevant files,
+      patterns, and conventions. Then outline your implementation plan:
+      - Which files to create or modify
+      - What approach you'll take
+      - Any dependencies or edge cases
+
+      Do NOT write code yet — only read files and plan.
+    allowed_tools: [read, grep, find, ls, bash]
+
+  - id: implement
+    type: prompt
+    prompt: |
+      Now implement the plan from the previous step.
+      Follow existing code conventions. Write clean, minimal code — no unnecessary abstractions.
+    allowed_tools: [read, grep, find, ls, bash, edit, write]
+
+  - id: verify
+    type: prompt
+    prompt: |
+      Verify your implementation:
+      1. Re-read the files you changed to check for errors
+      2. Run any relevant type checks, linters, or tests
+      3. If something is wrong, fix it
+
+      Report what you verified and any issues found.
+    allowed_tools: [read, grep, find, ls, bash]

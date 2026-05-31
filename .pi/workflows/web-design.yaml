@@ -1,0 +1,417 @@
+name: web-design
+description: |
+  Design-first frontend workflow: Intent First -> Tokens -> Inventory -> Build -> Verify -> Review -> Gate.
+  Each fresh_context node reads inputs from disk (ARTIFACTS_DIR + HANDOFF.md).
+  Rework: gate-final on_reject:continue -> rework -> verify-rework -> gate-rework.
+  Nodes: scaffold, brief, gate-brief, tokens, inventory, gate-plan,
+         implement, verify, review, gate-final, rework, verify-rework, gate-rework, persist-handoff.
+
+nodes:
+
+  - id: scaffold
+    type: bash
+    allow_failure: true
+    timeout: 300000
+    command: bash .pi/scaffold.sh
+
+  - id: brief
+    type: prompt
+    allowed_tools: [read, write]
+    expected_artifacts:
+      - $ARTIFACTS_DIR/brief.md
+      - $ARTIFACTS_DIR/HANDOFF.md
+    prompt: |
+      You are in the DESIGN BRIEF phase. No code yet.
+
+      User request:
+      $USER_MESSAGE
+
+      First, check if a project-level handoff exists: read .pi/HANDOFF.md
+      (if it exists, this is a subsequent slice - incorporate prior context).
+
+      Apply the Intent First methodology. Answer all five questions:
+        1. Who is the user and what is their context?
+        2. What is the primary action this UI must enable?
+        3. What does success feel like? (words that exclude alternatives)
+        4. What domain vocabulary does this world use?
+        5. What makes this different from a generic app?
+
+      Then write an Intent Statement:
+        "This [component/screen] helps [who] to [primary action] so they can [outcome].
+        It should feel [adjective]. The user is typically [context/environment].
+        The most important thing to get right is [constraint]."
+
+      Then run Domain Exploration - produce all four before moving on:
+        - Domain vocabulary: 5-8 concepts native to this domain
+        - Color world: 5 physical objects or environments -> what colors do they suggest?
+        - Signature element: one detail that could only exist in this product
+        - Rejecting: 3 obvious design defaults -> what replaces each for this domain
+
+      Write your direction proposal to $ARTIFACTS_DIR/brief.md.
+
+      Initialize $ARTIFACTS_DIR/HANDOFF.md with this exact structure:
+        # HANDOFF - Community Coach / Run 1: Primitives
+        ## Project Overview
+        [one paragraph - stays fixed across all runs]
+        ## Completed So Far
+        [empty for first run]
+        ## Current State
+        - design-system/tokens.css: placeholder (tokens phase will fill)
+        - src/utils/cn.ts: cn() helper ready
+        ## Next Task
+        Brief phase - awaiting gate-brief approval
+        ## Breadcrumbs
+        [empty for first run]
+
+      End your chat response with: "Does that direction feel right?"
+      Do not write any code. Do not define tokens yet.
+
+  - id: gate-brief
+    type: approval
+    capture_response: true
+    on_reject: cancel
+    message: |
+      Design brief written to $ARTIFACTS_DIR/brief.md
+
+      Review the direction:
+        - Intent statement: does it name the right person and the right action?
+        - Domain vocabulary: does the language belong to this world?
+        - Color world: do the color references feel right for this domain?
+        - Signature element: is it genuinely specific, not generic SaaS?
+        - Rejecting: are defaults being replaced with better alternatives?
+
+      Approve to proceed to token design.
+      Reject with a reason to cancel (no code has been written).
+
+  - id: tokens
+    type: prompt
+    fresh_context: true
+    allowed_tools: [read, write]
+    expected_artifacts:
+      - $ARTIFACTS_DIR/design-tokens.md
+      - design-system/tokens.css
+    prompt: |
+      You are in the TOKEN SYSTEM phase. You have NO memory of prior phases.
+
+      Read these files first:
+        1. $ARTIFACTS_DIR/HANDOFF.md  - project context
+        2. $ARTIFACTS_DIR/brief.md    - confirmed design direction
+
+      Define the COMPLETE design token system for this project.
+
+      COLOR ARCHITECTURE (use oklch() color space for Tailwind v4):
+        - Primary brand (main actions, CTAs)
+        - Secondary (structural elements, headers)
+        - Accent (highlights, ratings, warnings)
+        - Neutrals: ink (text), canvas (card bg), surface (page bg), border
+        - State colors: error, success, warning, info
+
+      NAMING RULE - tokens must evoke the domain, not describe the color:
+        Bad: --blue-600, --gray-50
+        Good: --turf, --sky, --kit, --pitch, --ink, --canvas
+        TOKEN TEST: read your variable names out loud.
+        Do they sound like they belong to this product's world?
+        If any could belong to any app, rename them.
+
+      ALSO DEFINE:
+        - Typography scale (base 0.9375rem/15px for outdoor readability)
+        - Spacing scale (4px base unit: --space-1 through --space-16)
+        - Touch target: --touch-min: 3rem (48px WCAG 2.2 minimum)
+        - Border radius (--radius-sm through --radius-full)
+        - Shadows (--shadow-sm, --shadow-md, --shadow-lg)
+
+      Use Tailwind v4 @theme syntax (NO tailwind.config.ts):
+        @theme {
+          --color-primary: oklch(...);
+          --color-primary-lt: oklch(...);
+        }
+
+      Write to:
+        $ARTIFACTS_DIR/design-tokens.md  - documentation + rationale + usage examples
+        design-system/tokens.css         - actual @theme block (this is the source of truth)
+
+      Update $ARTIFACTS_DIR/HANDOFF.md:
+        - Add: Tokens written: [list key token names]
+        - Update Current State: design-system/tokens.css [filled with real tokens]
+        - Add Breadcrumb: "Token naming: [pattern used]"
+
+  - id: inventory
+    type: prompt
+    fresh_context: true
+    allowed_tools: [read, write]
+    expected_artifacts:
+      - $ARTIFACTS_DIR/components.md
+    prompt: |
+      You are in the INVENTORY phase. You have NO memory of prior phases.
+
+      Read these files first:
+        1. $ARTIFACTS_DIR/HANDOFF.md        - project context
+        2. $ARTIFACTS_DIR/brief.md          - design direction
+        3. $ARTIFACTS_DIR/design-tokens.md  - token system
+
+      List ALL components needed for this slice.
+      This is Run 1 - primitives: Button, Badge, Skeleton, Card.
+
+      For EACH component:
+        ## ComponentName
+        - Purpose: one sentence
+        - File: src/components/ui/ComponentName.tsx
+        - Props: TypeScript interface (write it out)
+        - Variants: list all variant options (e.g. size: sm/md/lg, intent: primary/secondary)
+        - States: which data states apply (loading, empty, error, populated, disabled)
+        - User action: what does the user DO with this?
+        - Mobile layout: describe at 375px
+        - Accessibility: role, aria-label, keyboard behavior
+        - Acceptance criteria:
+            1. [testable check]
+            2. [testable check]
+            3. [testable check]
+
+      Order by dependency (Button and Badge first, Skeleton, then Card which uses them).
+
+      Also produce a domain vocabulary -> UI vocabulary table mapping 5 domain concepts.
+
+      Write to $ARTIFACTS_DIR/components.md.
+
+      Update $ARTIFACTS_DIR/HANDOFF.md:
+        - List all 4 components with status
+        - Set "Next Task" to "Button (first, no dependencies)"
+
+  - id: gate-plan
+    type: approval
+    capture_response: true
+    on_reject: cancel
+    message: |
+      Component inventory written to $ARTIFACTS_DIR/components.md
+
+      Review the plan:
+        - All 4 primitives listed: Button, Badge, Skeleton, Card?
+        - Dependency order correct (primitives before Card)?
+        - Props interfaces defined?
+        - Acceptance criteria testable?
+        - Mobile layouts described?
+
+      Approve to begin implementation.
+      Reject with reason to cancel (no code written yet).
+
+  - id: implement
+    type: prompt
+    fresh_context: true
+    allowed_tools: [read, grep, find, ls, edit, write, bash]
+    expected_artifacts:
+      - $ARTIFACTS_DIR/build-summary.md
+    prompt: |
+      You are in the IMPLEMENTATION phase. You have NO memory of prior phases.
+
+      Read these files BEFORE writing any code:
+        1. $ARTIFACTS_DIR/HANDOFF.md           - project context + what is built
+        2. $ARTIFACTS_DIR/brief.md             - design direction + intent statement
+        3. $ARTIFACTS_DIR/design-tokens.md     - token system rationale
+        4. design-system/tokens.css            - actual token values (READ THIS FILE)
+        5. $ARTIFACTS_DIR/components.md        - component list + acceptance criteria
+        6. src/utils/cn.ts                     - cn() helper you must use
+
+      If $ARTIFACTS_DIR/build-summary.md exists: read it to see what is done already.
+      Do not re-implement existing files - read them first.
+
+      IMPLEMENTATION RULES:
+        - Build in order: Button -> Badge -> Skeleton -> Card
+        - Mobile-first: base styles for 375px, md: and lg: overrides for desktop
+        - Every interactive element needs ALL states: default, hover, active, focus-visible, disabled
+        - Touch targets: min-h-[var(--touch-min)] or min-h-12 (48px) on every tappable element
+        - Use CSS variables: bg-[var(--color-surface)], text-[var(--color-ink)]
+          If Tailwind picked up @theme tokens as utility classes, prefer those
+        - Use cn() from @/utils/cn for conditional className construction
+        - Zero hardcoded hex values. Zero hardcoded px sizes outside the token system.
+
+      After EACH component, write a Vitest test (src/components/ui/ComponentName.test.tsx):
+        - Render test: renders without throwing
+        - Props test: key variants render correct DOM
+        - Accessibility: role and aria attributes present where defined
+
+      After each component:
+        - Run: bun run typecheck 2>&1 | tail -10
+        - Fix TypeScript errors before moving to the next component
+        - Append to $ARTIFACTS_DIR/build-summary.md:
+            ComponentName OK - src/components/ui/ComponentName.tsx + test
+
+      MANDATE CHECK before marking each component done:
+        [] Touch targets >= 48px on all interactive elements
+        [] All interactive states present (hover, focus-visible, disabled)
+        [] Zero hardcoded values - only tokens or Tailwind utilities
+        [] TypeScript: bun run typecheck passes
+
+      When all 4 components are done:
+        Update $ARTIFACTS_DIR/HANDOFF.md - mark all 4 done, update breadcrumbs
+        Output to chat: "Built 4 components: Button OK Badge OK Skeleton OK Card OK. TypeScript clean."
+
+  - id: verify
+    type: bash
+    allow_failure: true
+    timeout: 180000
+    command: |
+      REPORT="$ARTIFACTS_DIR/quality-report.md"
+      printf '# Quality Report\nGenerated: %s\n\n' "$(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')" > "$REPORT"
+      PASS=0; FAIL=0
+      run_check() {
+        local name="$1"; shift
+        printf '## %s\n' "$name" >> "$REPORT"
+        if "$@" >> "$REPORT" 2>&1; then
+          printf 'PASS\n\n' >> "$REPORT"; PASS=$((PASS+1))
+        else
+          printf 'FAIL\n\n' >> "$REPORT"; FAIL=$((FAIL+1))
+        fi
+      }
+      run_check "TypeScript"  bun run typecheck
+      run_check "ESLint"      bun run lint
+      run_check "Prettier"    bun run format:check
+      run_check "Unit tests"  bun run test -- --reporter=verbose
+      run_check "Vite build"  bun run build
+      if [ -d dist ]; then
+        run_check "Bundle size" bun run size
+      fi
+      IMG=$(grep -rn '<img' src/ 2>/dev/null | grep -v 'loading=' | wc -l || echo 0)
+      printf '## Lazy loading\n' >> "$REPORT"
+      if [ "$IMG" -eq 0 ]; then
+        printf 'PASS\n\n' >> "$REPORT"; PASS=$((PASS+1))
+      else
+        printf 'FAIL - %d img tags missing loading attribute\n\n' "$IMG" >> "$REPORT"; FAIL=$((FAIL+1))
+      fi
+      printf '---\nSummary: %d passed, %d failed\n' "$PASS" "$FAIL" >> "$REPORT"
+      echo "Quality: $PASS passed, $FAIL failed"
+
+  - id: review
+    type: prompt
+    fresh_context: true
+    allowed_tools: [read, grep, find, ls, bash, write]
+    prompt: |
+      You are a hostile senior engineer reviewing a pull request. Find every shortcoming.
+      Be specific - vague feedback is useless. You have NO memory of prior phases.
+
+      Read in this order:
+        1. $ARTIFACTS_DIR/HANDOFF.md           - project context
+        2. $ARTIFACTS_DIR/brief.md             - what was promised
+        3. $ARTIFACTS_DIR/design-tokens.md     - the token system the code must follow
+        4. $ARTIFACTS_DIR/quality-report.md    - automated gate results
+        5. $ARTIFACTS_DIR/components.md        - acceptance criteria per component
+        6. src/components/ui/                  - the actual implementation (read each file)
+
+      For EACH component (Button, Badge, Skeleton, Card), check:
+
+      DESIGN CONFORMANCE
+        [] Only token values? No hardcoded hex or arbitrary [#...] values?
+        [] Token names match the domain-evocative design system?
+        [] Typography follows defined scale?
+
+      MOBILE FIRST
+        [] Base styles for mobile (375px)?
+        [] Touch targets >= 48px on interactive elements?
+
+      COMPONENT COMPLETENESS
+        [] All interactive states: default, hover, active, focus-visible, disabled?
+        [] focus-visible styled and not suppressed?
+
+      CRAFT
+        [] Squint test: hierarchy clear without reading text?
+        [] Does anything feel specific to this domain vs generic SaaS?
+
+      ACCESSIBILITY
+        [] Buttons have accessible names?
+        [] ARIA roles on custom interactive elements?
+
+      Score each: PASS / FAIL / WARN with file:line for FAIL items.
+
+      Overall score 1-10:
+        10 = production-ready, 7 = acceptable v1, 5 = needs work, below 5 = reject
+
+      Write to $ARTIFACTS_DIR/review-report.md.
+      End with: "RECOMMENDATION: APPROVE (score N/10)" or "RECOMMENDATION: REJECT (score N/10) - [reason]"
+
+  - id: gate-final
+    type: approval
+    capture_response: true
+    on_reject: continue
+    message: |
+      Review at $ARTIFACTS_DIR/review-report.md
+      Quality report at $ARTIFACTS_DIR/quality-report.md
+
+      APPROVE -> slice accepted. Rework node will self-terminate.
+      REJECT  -> provide specific issues. Rework addresses only FAIL items.
+                 Second rejection (gate-rework) will rollback all changes.
+
+  - id: rework
+    type: prompt
+    fresh_context: true
+    allowed_tools: [read, grep, find, ls, edit, write, bash]
+    prompt: |
+      You are in the REWORK phase. You have NO memory of prior phases.
+
+      Rejection reason: $REJECTION_REASON
+
+      FIRST: check if rework is actually needed.
+        Read $ARTIFACTS_DIR/review-report.md.
+        If $REJECTION_REASON is empty or "[approved]" or score is >= 7 with no specific rejection:
+          Write "No rework needed - slice was approved." to $ARTIFACTS_DIR/rework-summary.md
+          Stop immediately. Do not touch any source files.
+
+      IF REWORK IS NEEDED:
+        Read:
+          1. $ARTIFACTS_DIR/HANDOFF.md        - current state
+          2. $ARTIFACTS_DIR/review-report.md  - every FAIL item with file:line
+          3. design-system/tokens.css         - token values for corrections
+
+        Fix ONLY items marked FAIL. Do not refactor PASS items.
+        For each fix:
+          - Read the file at the specified location
+          - Make the surgical change
+          - Run: bun run typecheck 2>&1 | tail -5
+          - Append to $ARTIFACTS_DIR/rework-summary.md: "Fixed: [file:line] - [what changed]"
+
+        When done append: "Rework complete. N items fixed."
+
+  - id: verify-rework
+    type: bash
+    allow_failure: true
+    timeout: 180000
+    command: |
+      REPORT="$ARTIFACTS_DIR/quality-report-rework.md"
+      printf '# Quality Report (Post-Rework)\nGenerated: %s\n\n' "$(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')" > "$REPORT"
+      PASS=0; FAIL=0
+      run_check() {
+        local name="$1"; shift
+        printf '## %s\n' "$name" >> "$REPORT"
+        if "$@" >> "$REPORT" 2>&1; then
+          printf 'PASS\n\n' >> "$REPORT"; PASS=$((PASS+1))
+        else
+          printf 'FAIL\n\n' >> "$REPORT"; FAIL=$((FAIL+1))
+        fi
+      }
+      run_check "TypeScript" bun run typecheck
+      run_check "ESLint"     bun run lint
+      run_check "Unit tests" bun run test -- --reporter=verbose
+      printf '---\nSummary: %d passed, %d failed\n' "$PASS" "$FAIL" >> "$REPORT"
+      echo "Post-rework: $PASS passed, $FAIL failed"
+
+  - id: gate-rework
+    type: approval
+    capture_response: true
+    on_reject: rollback
+    message: |
+      Rework complete.
+        $ARTIFACTS_DIR/rework-summary.md        - what was fixed
+        $ARTIFACTS_DIR/quality-report-rework.md - post-rework gates
+
+      APPROVE -> accept this slice. HANDOFF will be persisted.
+      REJECT  -> all changes rolled back via git stash.
+
+  - id: persist-handoff
+    type: bash
+    allow_failure: true
+    command: |
+      if [ -f "$ARTIFACTS_DIR/HANDOFF.md" ]; then
+        mkdir -p .pi
+        cp "$ARTIFACTS_DIR/HANDOFF.md" .pi/HANDOFF.md
+        echo "HANDOFF persisted to .pi/HANDOFF.md for next slice."
+      else
+        echo "No HANDOFF.md in ARTIFACTS_DIR - skipping."
+      fi

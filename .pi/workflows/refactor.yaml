@@ -1,0 +1,42 @@
+name: refactor
+description: Refactor code — analyze, plan, execute incrementally, verify
+
+nodes:
+  - id: analyze
+    type: prompt
+    prompt: |
+      Refactoring target: $USER_MESSAGE
+
+      Analyze the current code:
+      1. Read all relevant files
+      2. Map the dependencies (what calls what, what imports what)
+      3. Identify the specific problems to fix (duplication, coupling, naming, etc.)
+
+      Do NOT make changes yet.
+    allowed_tools: [read, grep, find, ls, bash]
+
+  - id: approval
+    type: approval
+    message: |
+      Review the analysis above. The next step will make refactoring changes.
+      Approve to proceed, or decline to stop.
+
+  - id: refactor
+    type: prompt
+    prompt: |
+      Execute the refactoring plan. Work incrementally:
+      - Make one logical change at a time
+      - After each change, verify it doesn't break anything (type check, tests)
+      - Keep behavior identical — this is a refactor, not a feature change
+    allowed_tools: [read, grep, find, ls, bash, edit, write]
+
+  - id: verify
+    type: prompt
+    prompt: |
+      Final verification:
+      1. Run the full type check and test suite
+      2. Re-read changed files to confirm the refactoring is clean
+      3. Summarize: what changed, why it's better, what was preserved
+
+      If anything is broken, fix it before reporting.
+    allowed_tools: [read, grep, find, ls, bash, edit, write]

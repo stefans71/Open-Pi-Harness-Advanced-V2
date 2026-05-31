@@ -1,0 +1,10 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"rootDir": "src",
+		"paths": {
+			"@mariozechner/pi-coding-agent": ["/usr/lib/node_modules/@mariozechner/pi-coding-agent/dist/core/extensions/index.d.ts"]
+		}
+	},
+	"include": ["src"]
+}

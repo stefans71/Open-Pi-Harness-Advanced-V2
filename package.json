@@ -1,0 +1,28 @@
+{
+	"name": "open-pi-harness-advanced-v2",
+	"version": "2.0.0",
+	"private": true,
+	"description": "Open PI Harness Advanced V2 — modular extensions for local LLM coding workflows",
+	"workspaces": [
+		"extensions/pi-memory",
+		"extensions/pi-orchestrator",
+		"extensions/pi-skills",
+		"extensions/pi-workflows"
+	],
+	"scripts": {
+		"build": "npm run build --workspaces",
+		"build:memory": "npm run build -w extensions/pi-memory",
+		"build:orchestrator": "npm run build -w extensions/pi-orchestrator",
+		"build:skills": "npm run build -w extensions/pi-skills",
+		"build:workflows": "npm run build -w extensions/pi-workflows",
+		"clean": "rm -rf extensions/*/dist"
+	},
+	"engines": {
+		"node": ">=18"
+	},
+	"license": "Apache-2.0",
+	"devDependencies": {
+		"@vitest/coverage-v8": "^4.1.6",
+		"vitest": "^4.1.6"
+	}
+}

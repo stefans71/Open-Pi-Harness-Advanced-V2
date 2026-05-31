@@ -1,0 +1,45 @@
+name: trace-gen
+description: Execute a task for training trace generation — structured for high-quality fine-tuning data
+
+nodes:
+  - id: understand
+    type: prompt
+    prompt: |
+      Task: $USER_MESSAGE
+
+      Before doing anything, thoroughly understand what's being asked:
+      1. Read relevant files to understand the current state
+      2. Identify the specific changes or outputs needed
+      3. Think through your approach step by step
+
+      Explain your understanding and plan. Do NOT make changes yet.
+    allowed_tools: [read, grep, find, ls, bash]
+
+  - id: execute
+    type: prompt
+    prompt: |
+      Execute the task you planned above.
+      Think carefully before each action. Explain your reasoning as you go.
+      Use tools deliberately — read before editing, verify after writing.
+    allowed_tools: [read, grep, find, ls, bash, edit, write]
+
+  - id: verify
+    type: prompt
+    prompt: |
+      Verify your work:
+      1. Re-read every file you modified
+      2. Run any applicable checks (type check, lint, tests, build)
+      3. Confirm the task requirements are fully met
+
+      If anything is wrong or incomplete, fix it now.
+    allowed_tools: [read, grep, find, ls, bash, edit, write]
+
+  - id: summary
+    type: prompt
+    prompt: |
+      Write a brief summary of what you did:
+      - What was the task
+      - What files you changed and why
+      - How you verified correctness
+      - Any decisions or trade-offs you made
+    allowed_tools: []

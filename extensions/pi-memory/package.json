@@ -1,0 +1,28 @@
+{
+  "name": "pi-memory",
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Cross-session vector memory for PI Agent",
+  "pi": {
+    "extensions": [
+      "src/index.ts"
+    ]
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "sqlite-vec": "^0.1.9",
+    "sqlite-vec-linux-x64": "^0.1.9",
+    "typebox": "^1.1.24"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/node": "^25.8.0",
+    "typescript": "^5.4.0",
+    "undici": "^8.3.0",
+    "vitest": "^4.1.6"
+  }
+}

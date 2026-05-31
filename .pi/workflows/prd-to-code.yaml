@@ -1,0 +1,273 @@
+name: prd-to-code
+description: |
+  Adapted from Archon's archon-piv-loop + archon-interactive-prd.
+  Each phase reads its inputs from $ARTIFACTS_DIR/*.md on disk, not from chat history.
+  fresh_context: true on prompt nodes — each phase starts with a clean slate.
+
+  Phases:
+    1. understand    — PRD authoring (prompt)
+    2. gate-prd      — user reviews PRD, can reject with reason → cancel
+    3. plan          — fresh-context planning (prompt)
+    4. estimate      — bash node; checks per-step context budget, writes warnings
+    5. implement     — fresh-context Ralph-style implementation (prompt)
+    6. verify        — bash node; typecheck + lint + tests, allow_failure
+    7. review        — fresh-context review against PRD acceptance criteria (prompt)
+    8. gate-final    — user approves or rejects with reason; reject → git stash
+
+nodes:
+
+  # ───────────────────────── Phase 1 — Understand / write PRD ─────────────────────────
+  - id: understand
+    type: prompt
+    allowed_tools: [read, grep, find, ls, write]
+    prompt: |
+      You are in the UNDERSTAND phase of a PRD-to-code workflow.
+
+      User request:
+      $USER_MESSAGE
+
+      Artifacts directory (already exists, empty): $ARTIFACTS_DIR
+
+      Tasks:
+        1. Explore the codebase to understand the files relevant to the request.
+           Use read/grep/find/ls only — DO NOT modify anything in the source tree.
+        2. Explain your understanding by writing a structured PRD to
+           $ARTIFACTS_DIR/prd.md with EXACTLY these sections:
+
+           # PRD: <short title>
+
+           ## Goal
+           One paragraph: what the user wants and why.
+
+           ## Requirements
+           Bullet list of functional requirements.
+
+           ## Files to Change
+           Bullet list of `path:reason` (existing files only).
+
+           ## Files to Create
+           Bullet list of `path:purpose` (new files only).
+
+           ## Dependencies
+           Libraries, services, or other workflows this depends on. "None" is valid.
+
+           ## Acceptance Criteria
+           Numbered, testable checks. Each must be verifiable by running a command
+           or reading a specific file. Example:
+             1. `npx tsc --noEmit -p extensions/pi-workflows` exits 0
+             2. `.pi/workflows/prd-to-code.yaml` exists and is valid YAML
+
+      Output ONLY the PRD file. Do not summarize in chat — the next phase reads
+      from disk, not from your reply.
+
+  # ───────────────────────── Gate 1 — User reviews PRD ─────────────────────────
+  - id: gate-prd
+    type: approval
+    capture_response: true
+    on_reject: cancel
+    message: |
+      PRD written to $ARTIFACTS_DIR/prd.md.
+
+      Open it and review:
+        - Are the requirements correct and complete?
+        - Are the file lists accurate?
+        - Are the acceptance criteria testable?
+
+      Approve to proceed to planning. Reject with a reason to abort the workflow
+      (no code will have been changed yet).
+
+  # ───────────────────────── Phase 2 — Plan (fresh) ─────────────────────────
+  - id: plan
+    type: prompt
+    fresh_context: true
+    allowed_tools: [read, grep, find, ls, write]
+    prompt: |
+      You are in the PLAN phase. You have NO memory of prior phases.
+
+      Read $ARTIFACTS_DIR/prd.md FIRST. Then read every file listed under
+      "Files to Change" in the PRD to see current state.
+
+      Write $ARTIFACTS_DIR/plan.md as an ordered list of steps. Each step uses
+      this exact format:
+
+        ## Step N — <verb phrase>
+        - **File:** <path> (or "new file: <path>")
+        - **Change:** one sentence describing the edit
+        - **Verify:** the exact command or file-read that proves the step worked
+        - **Est. tool calls:** integer 1-5
+        - **Files to read first:** comma-separated paths (or "none")
+
+      HARD RULES:
+        - Each step must be doable in 1-5 tool calls. If a step feels bigger, split it.
+        - Prefer many small steps over few large ones.
+        - Every "Verify" line must be a concrete command or read — not "look at it".
+
+      End the file with:
+
+        ## Summary
+        - Total steps: N
+        - Files touched: <list>
+        - Risks: <bullets, or "None">
+
+      Write only the file. Do not narrate in chat.
+
+  # ───────────────────────── Phase 2b — Context budget check ─────────────────────────
+  - id: estimate
+    type: bash
+    allow_failure: true
+    timeout: 30000
+    command: |
+      node -e '
+        const fs = require("fs");
+        const path = require("path");
+        const ARTIFACTS = process.env.ARTIFACTS_DIR;
+        const planPath = path.join(ARTIFACTS, "plan.md");
+        if (!fs.existsSync(planPath)) {
+          console.error("plan.md not found");
+          process.exit(2);
+        }
+        const plan = fs.readFileSync(planPath, "utf8");
+        const steps = plan.split(/^## Step /m).slice(1);
+        const CTX = 196608;                  // Qwen 27B practical window
+        const BUDGET = Math.floor(CTX * 0.6); // leave room for response + memory injection
+        const warnings = [];
+        steps.forEach((s, i) => {
+          const files = [...s.matchAll(/(?:^|\s)([\w./\-]+\.\w+)/g)].map(m => m[1]);
+          let bytes = 0;
+          for (const f of new Set(files)) {
+            try { bytes += fs.statSync(f).size; } catch {}
+          }
+          const tokens = Math.ceil(bytes / 4);
+          if (tokens > BUDGET) {
+            warnings.push("Step " + (i+1) + ": ~" + tokens + " tokens > " + BUDGET + " budget — SPLIT before implementing");
+          }
+        });
+        const out = warnings.length
+          ? "CONTEXT WARNINGS:\n" + warnings.join("\n")
+          : "All steps fit in context budget (" + BUDGET + " token cap).";
+        fs.writeFileSync(path.join(ARTIFACTS, "context-estimate.md"), out + "\n");
+        console.log(out);
+      '
+
+  # ───────────────────────── Phase 3 — Implement (fresh, Ralph-style) ─────────────────────────
+  - id: implement
+    type: prompt
+    fresh_context: true
+    allowed_tools: [read, grep, find, ls, edit, write, bash]
+    prompt: |
+      You are in the IMPLEMENT phase. You have NO memory of prior phases.
+
+      Read in this order:
+        1. $ARTIFACTS_DIR/plan.md           — your sole guide
+        2. $ARTIFACTS_DIR/context-estimate.md  — warnings about oversized steps
+        3. $ARTIFACTS_DIR/prd.md            — only if plan.md references it
+
+      Execute steps in order, one at a time. For EACH step:
+
+        1. Read the files listed under "Files to read first" for that step.
+        2. Make the change exactly as described in "Change".
+        3. Run the "Verify" command/read for that step.
+        4. If verification fails, diagnose the root cause and debug it.
+           Re-run verify. Up to 3 fix attempts.
+        5. Append a one-line entry to $ARTIFACTS_DIR/implement-log.md:
+             Step N: <done | fixed-after-K-tries | skipped — reason>
+
+      RULES:
+        - Follow existing code conventions. Minimal changes only — no refactoring
+          beyond what plan.md specifies.
+        - Do not commit. The workflow does not commit; the user does after review.
+        - If a step's verify cannot be satisfied after 3 attempts, log it as
+          "skipped — <reason>" and continue. Do not get stuck.
+
+      When all steps are done, output a one-line summary to chat:
+        "Implemented N of M steps. See $ARTIFACTS_DIR/implement-log.md."
+
+  # ───────────────────────── Phase 4 — Verify (bash) ─────────────────────────
+  - id: verify
+    type: bash
+    allow_failure: true
+    timeout: 120000
+    command: |
+      {
+        echo "=== git diff --stat ==="
+        git diff --stat
+        echo
+        echo "=== typecheck ==="
+        if [ -f tsconfig.json ]; then
+          npx tsc --noEmit 2>&1 || echo "(typecheck failed or no tsconfig at root)"
+        else
+          for d in extensions/*/tsconfig.json; do
+            ext=$(dirname "$d")
+            echo "--- $ext ---"
+            npx tsc --noEmit -p "$ext" 2>&1 || true
+          done
+        fi
+        echo
+        echo "=== lint ==="
+        npm run -s lint 2>&1 || echo "(no lint configured)"
+        echo
+        echo "=== tests ==="
+        npm test --silent 2>&1 || echo "(no tests or tests failed)"
+      } | tee "$ARTIFACTS_DIR/verify.log"
+
+  # ───────────────────────── Phase 5 — Review (fresh) ─────────────────────────
+  - id: review
+    type: prompt
+    fresh_context: true
+    allowed_tools: [read, bash, write]
+    prompt: |
+      You are in the REVIEW phase. You have NO memory of prior phases.
+
+      Read in this order:
+        1. $ARTIFACTS_DIR/prd.md  (especially "Acceptance Criteria")
+        2. $ARTIFACTS_DIR/verify.log
+        3. $ARTIFACTS_DIR/implement-log.md
+        4. Run `git diff` to see what actually changed on disk.
+
+      Write $ARTIFACTS_DIR/review.md with EXACTLY these sections:
+
+        # Review
+
+        ## Acceptance Criteria
+        For each numbered criterion from the PRD, mark PASS / FAIL / UNKNOWN with
+        one line of evidence (file:line or verify.log line number).
+
+        ## Diff Summary
+        2-4 bullets describing what actually changed (not what was planned).
+
+        ## Skipped / Failed Steps
+        Anything in implement-log.md marked "skipped" or "fixed-after-K-tries"
+        with K >= 2. "None" is valid.
+
+        ## Issues Found
+        Bugs, missed requirements, scope creep. "None" is valid.
+
+        ## Recommendation
+        APPROVE | REJECT — with one-sentence reason.
+
+      Output the file path to chat when done. Nothing else.
+
+  # ───────────────────────── Gate 2 — Final approval ─────────────────────────
+  - id: gate-final
+    type: approval
+    capture_response: true
+    on_reject: rollback
+    message: |
+      Review written to $ARTIFACTS_DIR/review.md.
+
+      Open it. Decide:
+        - APPROVE → keep changes. Workflow ends cleanly.
+        - REJECT  → all changes are rolled back via `git stash push -u`.
+                    Your rejection reason is captured in the workflow log
+                    and available as $REJECTION_REASON for any future
+                    follow-up workflow that wants to fix and retry.
+
+  # ───────────────────────── Persist handoff (always runs) ─────────────────────────
+  - id: persist-handoff
+    type: bash
+    allow_failure: true
+    command: |
+      if [ -f "$ARTIFACTS_DIR/HANDOFF.md" ]; then
+        cp "$ARTIFACTS_DIR/HANDOFF.md" .pi/HANDOFF.md
+        echo "HANDOFF persisted to .pi/HANDOFF.md"
+      fi

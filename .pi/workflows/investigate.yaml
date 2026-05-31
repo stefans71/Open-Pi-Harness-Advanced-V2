@@ -1,0 +1,23 @@
+name: investigate
+description: Investigate a codebase question — read, grep, analyze, report findings
+
+nodes:
+  - id: scan
+    type: prompt
+    prompt: |
+      Investigate the following question about this codebase: $USER_MESSAGE
+
+      Start by finding relevant files and reading them. Use grep to search for key terms.
+      Do NOT make any changes — read-only investigation.
+    allowed_tools: [read, grep, find, ls, bash]
+
+  - id: analyze
+    type: prompt
+    prompt: |
+      Based on what you found, write a concise analysis:
+      1. What you found (with file paths and line numbers)
+      2. How the relevant code works
+      3. Any issues, risks, or suggestions
+
+      Be specific — cite code, not vague descriptions.
+    allowed_tools: [read, grep, find, ls]

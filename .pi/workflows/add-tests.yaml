@@ -1,0 +1,34 @@
+name: add-tests
+description: Add tests for existing code — analyze, write tests, run them
+
+nodes:
+  - id: analyze
+    type: prompt
+    prompt: |
+      Analyze what needs testing: $USER_MESSAGE
+
+      1. Read the target code and understand its behavior
+      2. Identify the existing test framework and conventions (look for test files, config)
+      3. List the test cases needed — happy path, edge cases, error conditions
+
+      Do NOT write tests yet — only plan.
+    allowed_tools: [read, grep, find, ls, bash]
+
+  - id: write-tests
+    type: prompt
+    prompt: |
+      Write the tests based on your analysis.
+      Follow the existing test framework and naming conventions.
+      Each test should be focused and have a clear assertion.
+    allowed_tools: [read, grep, find, ls, bash, edit, write]
+
+  - id: run-tests
+    type: prompt
+    prompt: |
+      Run the tests you wrote. If any fail:
+      1. Determine if the test is wrong or the code has a bug
+      2. Fix the test (not the code, unless it's clearly broken)
+      3. Re-run until all tests pass
+
+      Report: how many tests, what they cover, pass/fail status.
+    allowed_tools: [read, grep, find, ls, bash, edit, write]

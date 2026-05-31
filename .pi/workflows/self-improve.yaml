@@ -1,0 +1,131 @@
+name: self-improve
+description: |
+  Analyzes prior workflow runs and suggests improvements to workflow
+  definitions, skill files, and system configuration.
+
+nodes:
+  - id: collect
+    type: bash
+    command: |
+      MAX_TRACE_BYTES=200000
+
+      TOTAL=0
+      for f in $(find .pi/workflow-artifacts -name "events.jsonl" -mtime -7 -printf '%T@ %p\n' 2>/dev/null | sort -rn | cut -d' ' -f2); do
+        SIZE=$(stat -c%s "$f" 2>/dev/null || echo 0)
+        NEW_TOTAL=$((TOTAL + SIZE))
+        if [ "$NEW_TOTAL" -gt "$MAX_TRACE_BYTES" ]; then
+          echo "WARNING: Trace collection capped at ${TOTAL} bytes (${MAX_TRACE_BYTES} limit)." \
+            >> "$ARTIFACTS_DIR/recent-traces.txt"
+          break
+        fi
+        echo "=== $f ===" >> "$ARTIFACTS_DIR/recent-traces.txt"
+        cat "$f" >> "$ARTIFACTS_DIR/recent-traces.txt"
+        TOTAL=$NEW_TOTAL
+      done
+
+      touch "$ARTIFACTS_DIR/recent-traces.txt"
+      cat .pi/skills/.usage.json > "$ARTIFACTS_DIR/skill-usage.json" 2>/dev/null || echo "{}" > "$ARTIFACTS_DIR/skill-usage.json"
+
+  - id: analyze
+    type: prompt
+    fresh_context: true
+    depends_on: [collect]
+    allowed_tools: [read, write]
+    prompt: |
+      You are a workflow optimization analyst.
+
+      Read these files:
+        1. $ARTIFACTS_DIR/recent-traces.txt (recent workflow execution traces)
+        2. $ARTIFACTS_DIR/skill-usage.json (skill usage statistics)
+
+      Analyze across these dimensions:
+        - EFFICIENCY: nodes taking >120s, high retry counts, unnecessary steps
+        - INFORMATION FLOW: data lost at fresh_context boundaries
+        - ARTIFACT QUALITY: outputs missing file paths, code snippets, or concrete actions
+        - SKILL COVERAGE: prompts that triggered no skill but should have
+        - COMPLETION RATE: workflows that failed vs completed
+
+      Write $ARTIFACTS_DIR/analysis.md with findings and concrete suggestions.
+
+  - id: gate-review
+    type: approval
+    depends_on: [analyze]
+    capture_response: true
+    on_reject: cancel
+    message: |
+      Review $ARTIFACTS_DIR/analysis.md.
+      Approve to apply suggested improvements. Reject to discard.
+
+  - id: apply
+    type: prompt
+    fresh_context: true
+    depends_on: [gate-review]
+    allowed_tools: [read, write]
+    prompt: |
+      Read $ARTIFACTS_DIR/analysis.md for approved improvements.
+      Apply ONLY the approved changes to workflow YAML files and skill files.
+      Do not modify extension TypeScript source.
+
+      IMPORTANT: preserve the repo-relative directory structure inside
+      $ARTIFACTS_DIR/proposed-changes/. For example:
+        - A workflow change: $ARTIFACTS_DIR/proposed-changes/.pi/workflows/code-task.yaml
+        - A skill change: $ARTIFACTS_DIR/proposed-changes/.pi/skills/debug/SKILL.md
+        - A new skill: $ARTIFACTS_DIR/proposed-changes/.pi/skills/new-skill/SKILL.md
+
+      Do NOT overwrite originals in .pi/workflows/ or .pi/skills/ directly.
+
+  - id: diff-review
+    type: bash
+    depends_on: [apply]
+    command: |
+      echo "=== Proposed changes ==="
+      CHANGES_DIR="$ARTIFACTS_DIR/proposed-changes"
+      mkdir -p "$CHANGES_DIR"
+      find "$CHANGES_DIR" -type f | while read -r proposed; do
+        relpath="${proposed#$CHANGES_DIR/}"
+        if [ -f "$relpath" ]; then
+          diff -u "$relpath" "$proposed" || true
+        else
+          echo "+++ NEW FILE: $relpath"
+          cat "$proposed"
+        fi
+      done
+
+  - id: approve-changes
+    type: approval
+    depends_on: [diff-review]
+    capture_response: true
+    on_reject: cancel
+    message: |
+      Review the diffs above. These changes will be applied to your workflow
+      and skill files. Approve to apply, reject to discard.
+
+  - id: commit-changes
+    type: bash
+    depends_on: [approve-changes]
+    command: |
+      CHANGES_DIR="$ARTIFACTS_DIR/proposed-changes"
+      mkdir -p "$CHANGES_DIR"
+      find "$CHANGES_DIR" -type f | while read -r proposed; do
+        relpath="${proposed#$CHANGES_DIR/}"
+        case "$relpath" in
+          *..*)
+            echo "SKIPPED (path traversal): $relpath"
+            ;;
+          .pi/workflows/*.yaml)
+            mkdir -p "$(dirname "$relpath")"
+            cp "$proposed" "$relpath"
+            echo "Applied: $relpath"
+            ;;
+          *)
+            if [[ "$relpath" == .pi/skills/* ]] && [[ "$relpath" == */SKILL.md ]]; then
+              mkdir -p "$(dirname "$relpath")"
+              cp "$proposed" "$relpath"
+              echo "Applied: $relpath"
+            else
+              echo "SKIPPED (not a workflow YAML or SKILL.md): $relpath"
+            fi
+            ;;
+        esac
+      done
+      echo "Changes applied."
