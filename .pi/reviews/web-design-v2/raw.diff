@@ -1,0 +1,553 @@
+diff --git a/.pi/workflows/web-design.yaml b/.pi/workflows/web-design.yaml
+index 7a53376..17911a9 100644
+--- a/.pi/workflows/web-design.yaml
++++ b/.pi/workflows/web-design.yaml
+@@ -1,19 +1,173 @@
+ name: web-design
+ description: |
+-  Design-first frontend workflow: Intent First -> Tokens -> Inventory -> Build -> Verify -> Review -> Gate.
+-  Each fresh_context node reads inputs from disk (ARTIFACTS_DIR + HANDOFF.md).
+-  Rework: gate-final on_reject:continue -> rework -> verify-rework -> gate-rework.
+-  Nodes: scaffold, brief, gate-brief, tokens, inventory, gate-plan,
+-         implement, verify, review, gate-final, rework, verify-rework, gate-rework, persist-handoff.
++  Design-first frontend workflow with user calibration + PRD pipeline.
++  Phase 0: scaffold, read-profile, calibrate, gate-calibrate, refine-profile, save-profile.
++  Phase 1: brief, gate-brief.
++  Phase 2: tokens, inventory, gate-plan.
++  Phase 3: prd, gate-prd, plan, estimate.
++  Phase 4: implement, verify.
++  Phase 5: review, gate-final, rework, verify-rework, gate-rework.
++  Phase 6: persist-handoff.
++  23 nodes total. Each fresh_context node reads inputs from disk (ARTIFACTS_DIR + HANDOFF.md).
+ 
+ nodes:
+ 
++  # ── Phase 0 — Setup + Calibration ──────────────────────────────────
++
+   - id: scaffold
+     type: bash
+     allow_failure: true
+     timeout: 300000
+     command: bash .pi/scaffold.sh
+ 
++  - id: read-profile
++    type: bash
++    allow_failure: true
++    command: |
++      # Write sentinel FIRST so calibrate always has input
++      echo '{"exists": false}' > "$ARTIFACTS_DIR/existing-profile.json"
++
++      PROFILE_PATH=""
++      if [ -f ".pi/user-profile.json" ]; then
++        PROFILE_PATH=".pi/user-profile.json"
++        echo "Found project-level profile"
++      elif [ -f "$HOME/.pi/user-profile.json" ]; then
++        PROFILE_PATH="$HOME/.pi/user-profile.json"
++        echo "Found global profile"
++      fi
++
++      if [ -n "$PROFILE_PATH" ]; then
++        if cp "$PROFILE_PATH" "$ARTIFACTS_DIR/existing-profile.json" 2>/dev/null; then
++          echo "Profile loaded from $PROFILE_PATH"
++        else
++          echo "Failed to read profile - using first-run mode"
++        fi
++      else
++        echo "No existing profile - first run calibration"
++      fi
++
++  - id: calibrate
++    type: prompt
++    allowed_tools: [read, write]
++    expected_artifacts:
++      - $ARTIFACTS_DIR/draft-profile.json
++    prompt: |
++      You are in the USER CALIBRATION phase. This is a single-turn node — you
++      cannot ask questions interactively. Instead, read context and write a draft
++      profile for the user to review at the next gate.
++
++      Read $ARTIFACTS_DIR/existing-profile.json and note the user's request: $USER_MESSAGE
++
++      IF the file contains {"exists": false} — FIRST RUN:
++        Infer preferences from $USER_MESSAGE context where possible.
++        For anything you cannot infer, use these defaults:
++          - frontend_level: 5 (intermediate)
++          - design_background: "know_what_i_want"
++          - tech_stack: "react_tailwind"
++          - css_approach: "tailwind"
++          - design_tools: "none"
++          - communication_style: "explain_decisions"
++
++        Write $ARTIFACTS_DIR/draft-profile.json with the full schema:
++          {
++            "version": 1,
++            "updated_at": "<ISO timestamp>",
++            "experience": { "frontend_level": N, "design_background": "..." },
++            "preferences": { "tech_stack": "...", "css_approach": "...", "design_tools": "...", "communication_style": "..." },
++            "adaptive": { "you_decide_count": 0, "auto_decide_technical": false }
++          }
++
++        In your chat response, present the draft as a readable summary:
++          "Here's your draft profile based on what I can infer:
++           - Frontend level: [N]/10 — [why you chose this]
++           - Design background: [value]
++           - Tech stack: [value]
++           - CSS: [value]
++           - Design tools: [value]
++           - Communication: [value]
++
++          Review at the next gate. Approve if correct, or reject with your
++          preferred values (e.g., 'frontend_level: 8, tech_stack: vue')."
++
++      IF the file contains an existing profile:
++        Copy it to $ARTIFACTS_DIR/draft-profile.json unchanged.
++        Present a readable summary in chat:
++          "Your saved profile:
++           - Frontend level: [N]/10
++           - Design background: [value]
++           - Tech stack: [value]
++           - CSS: [value]
++           - Design tools: [value]
++           - Communication: [value]
++
++          Approve to keep, or reject with changes."
++
++  - id: gate-calibrate
++    type: approval
++    capture_response: true
++    on_reject: continue
++    message: |
++      Draft profile at $ARTIFACTS_DIR/draft-profile.json
++
++      Review your preferences:
++        - Approve to use this profile as-is
++        - Reject with your corrections, e.g.:
++          "frontend_level: 8, tech_stack: vue, css_approach: css_modules"
++          or "start fresh — ask me everything"
++
++  - id: refine-profile
++    type: prompt
++    allowed_tools: [read, write]
++    expected_artifacts:
++      - $ARTIFACTS_DIR/user-profile.json
++    prompt: |
++      You are in the PROFILE REFINEMENT phase.
++
++      Rejection reason: $REJECTION_REASON
++
++      Read $ARTIFACTS_DIR/draft-profile.json.
++
++      IF $REJECTION_REASON is empty or "[approved]":
++        Copy $ARTIFACTS_DIR/draft-profile.json to $ARTIFACTS_DIR/user-profile.json
++        unchanged. Say "Profile confirmed."
++
++      IF $REJECTION_REASON contains specific field changes:
++        Parse the changes, update the profile accordingly, and write the updated
++        version to $ARTIFACTS_DIR/user-profile.json. Update the "updated_at"
++        timestamp. Say "Profile updated with your changes: [list what changed]."
++
++      IF $REJECTION_REASON says "start fresh" or similar:
++        Write a profile with these defaults and note in chat that the user should
++        run the workflow again after this to refine further:
++          - frontend_level: 5
++          - design_background: "know_what_i_want"
++          - tech_stack: "you_decide"
++          - css_approach: "you_decide"
++          - design_tools: "none"
++          - communication_style: "show_options"
++          - you_decide_count: 6 (auto_decide_technical: true)
++
++  - id: save-profile
++    type: bash
++    allow_failure: true
++    command: |
++      if [ -f "$ARTIFACTS_DIR/user-profile.json" ]; then
++        # Always save to global
++        mkdir -p "$HOME/.pi"
++        cp "$ARTIFACTS_DIR/user-profile.json" "$HOME/.pi/user-profile.json"
++        echo "Profile persisted to ~/.pi/user-profile.json"
++
++        # If a project-level override existed, update it too
++        if [ -f ".pi/user-profile.json" ]; then
++          cp "$ARTIFACTS_DIR/user-profile.json" ".pi/user-profile.json"
++          echo "Project-level profile also updated"
++        fi
++      else
++        echo "No profile artifact - skipping"
++      fi
++
++  # ── Phase 1 — Design ───────────────────────────────────────────────
++
+   - id: brief
+     type: prompt
+     allowed_tools: [read, write]
+@@ -26,6 +180,8 @@ nodes:
+       User request:
+       $USER_MESSAGE
+ 
++      Read $ARTIFACTS_DIR/user-profile.json for the user's preferences.
++
+       First, check if a project-level handoff exists: read .pi/HANDOFF.md
+       (if it exists, this is a subsequent slice - incorporate prior context).
+ 
+@@ -63,6 +219,20 @@ nodes:
+         ## Breadcrumbs
+         [empty for first run]
+ 
++      COMMUNICATION ADAPTATION (from user profile):
++      - frontend_level 1-3: explain design concepts. Define "tokens", "intent statement",
++        "domain vocabulary". Use analogies.
++      - frontend_level 4-6: brief explanations. Assume HTML/CSS familiarity.
++      - frontend_level 7-10: be concise. Use design terminology freely.
++
++      - design_background "designer": use proper design terms (kerning, visual weight).
++      - design_background "know_what_i_want": translate their descriptions into design terms.
++      - design_background "just_build_it": make confident choices. One strong direction.
++
++      - communication_style "show_options": present 2-3 options for color direction and layout.
++      - communication_style "just_build_it": choose the best option and explain briefly.
++      - communication_style "explain_decisions": add rationale paragraph for each decision.
++
+       End your chat response with: "Does that direction feel right?"
+       Do not write any code. Do not define tokens yet.
+ 
+@@ -83,6 +253,8 @@ nodes:
+       Approve to proceed to token design.
+       Reject with a reason to cancel (no code has been written).
+ 
++  # ── Phase 2 — Tokens + Inventory ───────────────────────────────────
++
+   - id: tokens
+     type: prompt
+     fresh_context: true
+@@ -94,8 +266,9 @@ nodes:
+       You are in the TOKEN SYSTEM phase. You have NO memory of prior phases.
+ 
+       Read these files first:
+-        1. $ARTIFACTS_DIR/HANDOFF.md  - project context
+-        2. $ARTIFACTS_DIR/brief.md    - confirmed design direction
++        1. $ARTIFACTS_DIR/HANDOFF.md         - project context
++        2. $ARTIFACTS_DIR/brief.md           - confirmed design direction
++        3. $ARTIFACTS_DIR/user-profile.json  - user preferences
+ 
+       Define the COMPLETE design token system for this project.
+ 
+@@ -120,15 +293,23 @@ nodes:
+         - Border radius (--radius-sm through --radius-full)
+         - Shadows (--shadow-sm, --shadow-md, --shadow-lg)
+ 
+-      Use Tailwind v4 @theme syntax (NO tailwind.config.ts):
++      CSS APPROACH (from user profile):
++      If css_approach is "tailwind" or "you_decide": use Tailwind v4 @theme syntax
++        (NO tailwind.config.ts — v4 uses CSS-native config):
+         @theme {
+           --color-primary: oklch(...);
+           --color-primary-lt: oklch(...);
+         }
++      If "css_modules": use :root CSS custom properties with module-scoped imports.
++        Do NOT use @theme syntax.
++      If "vanilla_css": use :root custom properties with documented fallbacks.
++        Do NOT use @theme syntax.
++      If "styled_components": use a ThemeProvider with a JS theme object.
++        Do NOT use @theme syntax.
+ 
+       Write to:
+         $ARTIFACTS_DIR/design-tokens.md  - documentation + rationale + usage examples
+-        design-system/tokens.css         - actual @theme block (this is the source of truth)
++        design-system/tokens.css         - actual token definitions (this is the source of truth)
+ 
+       Update $ARTIFACTS_DIR/HANDOFF.md:
+         - Add: Tokens written: [list key token names]
+@@ -145,9 +326,10 @@ nodes:
+       You are in the INVENTORY phase. You have NO memory of prior phases.
+ 
+       Read these files first:
+-        1. $ARTIFACTS_DIR/HANDOFF.md        - project context
+-        2. $ARTIFACTS_DIR/brief.md          - design direction
+-        3. $ARTIFACTS_DIR/design-tokens.md  - token system
++        1. $ARTIFACTS_DIR/HANDOFF.md         - project context
++        2. $ARTIFACTS_DIR/brief.md           - design direction
++        3. $ARTIFACTS_DIR/design-tokens.md   - token system
++        4. $ARTIFACTS_DIR/user-profile.json  - user preferences
+ 
+       List ALL components needed for this slice.
+       This is Run 1 - primitives: Button, Badge, Skeleton, Card.
+@@ -167,6 +349,11 @@ nodes:
+             2. [testable check]
+             3. [testable check]
+ 
++      If design_tools is "figma": reference Figma component naming conventions.
++        Mention that the user can export assets.
++      If design_tools is "none": be more prescriptive about visual specifications.
++        Include detailed dimensions in Mobile Layout descriptions.
++
+       Order by dependency (Button and Badge first, Skeleton, then Card which uses them).
+ 
+       Also produce a domain vocabulary -> UI vocabulary table mapping 5 domain concepts.
+@@ -191,29 +378,186 @@ nodes:
+         - Acceptance criteria testable?
+         - Mobile layouts described?
+ 
+-      Approve to begin implementation.
++      Approve to proceed to PRD generation.
++      Reject with reason to cancel (no code written yet).
++
++  # ── Phase 3 — PRD + Planning ───────────────────────────────────────
++
++  - id: prd
++    type: prompt
++    fresh_context: true
++    allowed_tools: [read, grep, find, ls, write]
++    expected_artifacts:
++      - $ARTIFACTS_DIR/prd.md
++    prompt: |
++      You are in the PRD phase. You have NO memory of prior phases.
++
++      Read in this order:
++        1. $ARTIFACTS_DIR/HANDOFF.md         - project context
++        2. $ARTIFACTS_DIR/user-profile.json  - user preferences and tech stack
++        3. $ARTIFACTS_DIR/brief.md           - design direction + intent
++        4. $ARTIFACTS_DIR/design-tokens.md   - token system
++        5. $ARTIFACTS_DIR/components.md      - component inventory + acceptance criteria
++
++      Explore the existing codebase to understand current state:
++        - Read package.json, tsconfig.json for project config
++        - Check src/ structure for existing patterns
++        - Identify files that need to be created or modified
++
++      Write $ARTIFACTS_DIR/prd.md with EXACTLY these sections:
++
++        # PRD: <short title from brief>
++
++        ## Goal
++        One paragraph: what the user wants and why (from brief.md intent statement).
++
++        ## Tech Stack
++        From user-profile.json preferences. If "you_decide", choose based on the
++        project's existing setup or recommend React + Tailwind as default.
++
++        ## Requirements
++        Bullet list of functional requirements derived from components.md.
++        Each requirement must be specific and testable.
++
++        ## Files to Create
++        Bullet list of `path:purpose` — every component, test, and config file.
++
++        ## Files to Modify
++        Bullet list of `path:reason` — existing files that need updates.
++
++        ## Dependencies
++        Libraries to install. "None" if all deps are already present.
++
++        ## Acceptance Criteria
++        Numbered, testable checks. Each must be verifiable by running a command
++        or reading a specific file. Merge criteria from components.md with
++        structural checks (typecheck, lint, build, tests pass).
++
++      Output ONLY the PRD file. Do not summarize in chat.
++
++  - id: gate-prd
++    type: approval
++    capture_response: true
++    on_reject: cancel
++    message: |
++      PRD written to $ARTIFACTS_DIR/prd.md
++
++      Review:
++        - Requirements match the component inventory?
++        - Tech stack matches your preferences?
++        - File lists accurate?
++        - Acceptance criteria testable?
++
++      Approve to proceed to planning.
+       Reject with reason to cancel (no code written yet).
+ 
++  - id: plan
++    type: prompt
++    fresh_context: true
++    allowed_tools: [read, grep, find, ls, write]
++    expected_artifacts:
++      - $ARTIFACTS_DIR/plan.md
++    prompt: |
++      You are in the PLAN phase. You have NO memory of prior phases.
++
++      Read in this order:
++        1. $ARTIFACTS_DIR/prd.md             - requirements + acceptance criteria
++        2. $ARTIFACTS_DIR/user-profile.json  - user tech stack preferences
++        3. $ARTIFACTS_DIR/components.md      - component specs with props and variants
++        4. $ARTIFACTS_DIR/design-tokens.md   - token system
++        5. design-system/tokens.css          - actual token values
++
++      Read every file listed under "Files to Modify" in the PRD.
++
++      Write $ARTIFACTS_DIR/plan.md as an ordered list of steps:
++
++        ## Step N — <verb phrase>
++        - **File:** <path> (or "new file: <path>")
++        - **Change:** one sentence describing the edit
++        - **Verify:** the exact command that proves the step worked
++        - **Est. tool calls:** integer 1-5
++        - **Files to read first:** comma-separated paths (or "none")
++
++      RULES:
++        - Each step must be doable in 1-5 tool calls. Split bigger steps.
++        - Build components in dependency order (from components.md).
++        - Include a test-writing step for each component.
++        - Every "Verify" must be a concrete command, not "check it looks right".
++
++      End with:
++        ## Summary
++        - Total steps: N
++        - Files touched: <list>
++        - Build order: <component dependency order>
++
++  - id: estimate
++    type: bash
++    allow_failure: true
++    timeout: 30000
++    command: |
++      node -e '
++        const fs = require("fs");
++        const path = require("path");
++        const ARTIFACTS = "$ARTIFACTS_DIR";
++        const planPath = path.join(ARTIFACTS, "plan.md");
++        if (!fs.existsSync(planPath)) { console.error("plan.md not found"); process.exit(2); }
++        const plan = fs.readFileSync(planPath, "utf8");
++        const steps = plan.split(/^## Step /m).slice(1);
++        const CTX = $MODEL_CONTEXT || 196608;
++        const BUDGET = Math.floor(CTX * 0.6);
++        const warnings = [];
++        steps.forEach((s, i) => {
++          const files = [...s.matchAll(/(?:^|\s)([\w./\-]+\.\w+)/g)].map(m => m[1]);
++          let bytes = 0;
++          for (const f of new Set(files)) { try { bytes += fs.statSync(f).size; } catch {} }
++          const tokens = Math.ceil(bytes / 4);
++          if (tokens > BUDGET) {
++            warnings.push("Step " + (i+1) + ": ~" + tokens + " tokens > " + BUDGET + " budget — SPLIT");
++          }
++        });
++        const out = warnings.length
++          ? "CONTEXT WARNINGS:\n" + warnings.join("\n")
++          : "All steps fit in context budget (" + BUDGET + " token cap).";
++        fs.writeFileSync(path.join(ARTIFACTS, "context-estimate.md"), out + "\n");
++        console.log(out);
++      '
++
++  # ── Phase 4 — Build ────────────────────────────────────────────────
++
+   - id: implement
+     type: prompt
+     fresh_context: true
+     allowed_tools: [read, grep, find, ls, edit, write, bash]
+     expected_artifacts:
+       - $ARTIFACTS_DIR/build-summary.md
++      - $ARTIFACTS_DIR/implement-log.md
+     prompt: |
+       You are in the IMPLEMENTATION phase. You have NO memory of prior phases.
+ 
+-      Read these files BEFORE writing any code:
+-        1. $ARTIFACTS_DIR/HANDOFF.md           - project context + what is built
+-        2. $ARTIFACTS_DIR/brief.md             - design direction + intent statement
+-        3. $ARTIFACTS_DIR/design-tokens.md     - token system rationale
+-        4. design-system/tokens.css            - actual token values (READ THIS FILE)
+-        5. $ARTIFACTS_DIR/components.md        - component list + acceptance criteria
+-        6. src/utils/cn.ts                     - cn() helper you must use
+-
++      Read in this order:
++        1. $ARTIFACTS_DIR/plan.md              - your step-by-step guide (follow this)
++        2. $ARTIFACTS_DIR/context-estimate.md  - context budget warnings (if it exists)
++        3. $ARTIFACTS_DIR/HANDOFF.md           - project context + what is built
++        4. $ARTIFACTS_DIR/prd.md               - requirements + acceptance criteria
++        5. $ARTIFACTS_DIR/user-profile.json    - user preferences
++        6. $ARTIFACTS_DIR/design-tokens.md     - token system rationale
++        7. design-system/tokens.css            - actual token values (READ THIS FILE)
++        8. $ARTIFACTS_DIR/components.md        - component list + acceptance criteria
++        9. src/utils/cn.ts                     - cn() helper you must use
++
++      If $ARTIFACTS_DIR/context-estimate.md does not exist, skip context budget
++      warnings and proceed normally.
+       If $ARTIFACTS_DIR/build-summary.md exists: read it to see what is done already.
+       Do not re-implement existing files - read them first.
+ 
++      Execute steps from plan.md in order, one at a time. For EACH step:
++        1. Read the files listed under "Files to read first" for that step.
++        2. Make the change exactly as described in "Change".
++        3. Run the "Verify" command for that step.
++        4. If verification fails, diagnose and fix (up to 3 attempts).
++        5. Append to $ARTIFACTS_DIR/implement-log.md:
++             Step N: <done | fixed-after-K-tries | skipped — reason>
++
+       IMPLEMENTATION RULES:
+         - Build in order: Button -> Badge -> Skeleton -> Card
+         - Mobile-first: base styles for 375px, md: and lg: overrides for desktop
+@@ -280,6 +624,8 @@ nodes:
+       printf '---\nSummary: %d passed, %d failed\n' "$PASS" "$FAIL" >> "$REPORT"
+       echo "Quality: $PASS passed, $FAIL failed"
+ 
++  # ── Phase 5 — Review + Rework ──────────────────────────────────────
++
+   - id: review
+     type: prompt
+     fresh_context: true
+@@ -295,6 +641,10 @@ nodes:
+         4. $ARTIFACTS_DIR/quality-report.md    - automated gate results
+         5. $ARTIFACTS_DIR/components.md        - acceptance criteria per component
+         6. src/components/ui/                  - the actual implementation (read each file)
++        7. $ARTIFACTS_DIR/user-profile.json    - adapt review communication
++        8. $ARTIFACTS_DIR/prd.md               - acceptance criteria to verify
++        9. $ARTIFACTS_DIR/plan.md              - what was planned vs. what was built
++        10. $ARTIFACTS_DIR/implement-log.md    - step completion status
+ 
+       For EACH component (Button, Badge, Skeleton, Card), check:
+ 
+@@ -324,6 +674,16 @@ nodes:
+       Overall score 1-10:
+         10 = production-ready, 7 = acceptable v1, 5 = needs work, below 5 = reject
+ 
++      USER ADAPTATION (from profile):
++      - frontend_level 1-3: frame FAIL items as learning opportunities. Explain WHY
++        each issue matters. Include fix suggestions with code snippets.
++      - frontend_level 4-6: standard technical review.
++      - frontend_level 7-10: terse, direct. Focus on architectural issues. Skip
++        explanations for obvious fixes.
++
++      ACCEPTANCE CRITERIA CHECK:
++      For each numbered criterion from prd.md, verify PASS/FAIL with evidence.
++
+       MODEL AWARENESS:
+       You are running as $MODEL_NAME (size: $MODEL_SIZE, context: $MODEL_CONTEXT tokens, vision: $MODEL_VISION).
+ 
+@@ -373,9 +733,10 @@ nodes:
+ 
+       IF REWORK IS NEEDED:
+         Read:
+-          1. $ARTIFACTS_DIR/HANDOFF.md        - current state
+-          2. $ARTIFACTS_DIR/review-report.md  - every FAIL item with file:line
+-          3. design-system/tokens.css         - token values for corrections
++          1. $ARTIFACTS_DIR/HANDOFF.md           - current state
++          2. $ARTIFACTS_DIR/review-report.md     - every FAIL item with file:line
++          3. design-system/tokens.css            - token values for corrections
++          4. $ARTIFACTS_DIR/user-profile.json    - adapt communication
+ 
+         Fix ONLY items marked FAIL. Do not refactor PASS items.
+         For each fix:
+@@ -384,6 +745,10 @@ nodes:
+           - Run: bun run typecheck 2>&1 | tail -5
+           - Append to $ARTIFACTS_DIR/rework-summary.md: "Fixed: [file:line] - [what changed]"
+ 
++        USER ADAPTATION:
++        - frontend_level 1-3: explain each fix (what was wrong, why, what the fix does).
++        - frontend_level 7-10: just fix and list changes.
++
+         MODEL AWARENESS:
+         You are $MODEL_NAME (size: $MODEL_SIZE).
+         - small (sub-9B): fix only concrete FAIL items (TypeScript errors, missing tokens, wrong
+@@ -430,6 +795,8 @@ nodes:
+       APPROVE -> accept this slice. HANDOFF will be persisted.
+       REJECT  -> all changes rolled back via git stash.
+ 
++  # ── Phase 6 — Persist ──────────────────────────────────────────────
++
+   - id: persist-handoff
+     type: bash
+     allow_failure: true

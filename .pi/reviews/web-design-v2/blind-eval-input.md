@@ -1,3 +1,104 @@
+# Blind Evaluation — Web-Design Workflow v2: Calibration + PRD Pipeline
+
+## Task Description
+
+A YAML workflow engine executes multi-step workflows for a local LLM coding agent. Each workflow consists of typed nodes (prompt, bash, approval) executed sequentially. The executor has a `resolveVariables()` method that substitutes `$VARIABLE` placeholders in all node fields before execution. Prompt nodes are **single-turn**: the model generates one response with tool calls, then the node completes — it cannot ask questions and wait for answers.
+
+The task: upgrade an existing 14-node web-design workflow to 23 nodes by adding:
+1. A **user calibration pipeline** (5 nodes) that detects or creates a user preference profile, lets the user review/adjust it via an approval gate, and persists it to disk for future runs.
+2. A **PRD + planning pipeline** (4 nodes) that transforms design artifacts into a structured Product Requirements Document and step-by-step implementation plan with verification commands.
+3. **Profile-aware adaptations** to 7 existing nodes so they adjust communication depth, CSS approach, and review style based on the user's saved preferences.
+
+**Specification:**
+
+### User Profile Schema
+
+Stored at `~/.pi/user-profile.json` (global). Project-level override at `.pi/user-profile.json` takes precedence.
+
+```json
+{
+  "version": 1,
+  "updated_at": "ISO timestamp",
+  "experience": {
+    "frontend_level": 1-10,
+    "design_background": "designer" | "know_what_i_want" | "just_build_it"
+  },
+  "preferences": {
+    "tech_stack": "react_tailwind" | "vue" | "svelte" | "vanilla" | "you_decide",
+    "css_approach": "tailwind" | "css_modules" | "styled_components" | "vanilla_css" | "you_decide",
+    "design_tools": "figma" | "canva" | "none",
+    "communication_style": "show_options" | "just_build_it" | "explain_decisions"
+  },
+  "adaptive": {
+    "you_decide_count": integer,
+    "auto_decide_technical": boolean
+  }
+}
+```
+
+### Calibration Pipeline Requirements
+
+1. `read-profile` (bash): Load existing profile from disk. Project-local first, global fallback. Must write a sentinel `{"exists": false}` FIRST so the next node always has valid input even if the read fails. `allow_failure: true`.
+
+2. `calibrate` (prompt): Single-turn node. Reads the existing profile (or sentinel). If first run: infer preferences from `$USER_MESSAGE`, write a draft profile to `$ARTIFACTS_DIR/draft-profile.json`, present a readable summary. If profile exists: copy it to draft, present summary. Must have `expected_artifacts` for draft-profile.json.
+
+3. `gate-calibrate` (approval): User reviews draft. `on_reject: continue` with `capture_response: true` so rejection text flows as `$REJECTION_REASON` to the next node.
+
+4. `refine-profile` (prompt): Reads `$REJECTION_REASON`. Three paths:
+   - Empty/approved: copy draft to `$ARTIFACTS_DIR/user-profile.json` unchanged
+   - Specific changes: parse and apply, update timestamp
+   - "Start fresh": write defaults with `auto_decide_technical: true`
+   Must have `expected_artifacts` for user-profile.json.
+
+5. `save-profile` (bash): Copy `$ARTIFACTS_DIR/user-profile.json` to `~/.pi/user-profile.json`. Also update `.pi/user-profile.json` if a project-level file already exists. `allow_failure: true`.
+
+### PRD + Planning Pipeline Requirements
+
+6. `prd` (prompt): `fresh_context: true`. Reads HANDOFF, user-profile, brief, design-tokens, components. Explores existing codebase. Writes `$ARTIFACTS_DIR/prd.md` with sections: Goal, Tech Stack, Requirements, Files to Create, Files to Modify, Dependencies, Acceptance Criteria. Must have `expected_artifacts`.
+
+7. `gate-prd` (approval): User reviews PRD. `on_reject: cancel`.
+
+8. `plan` (prompt): `fresh_context: true`. Reads PRD, user-profile, components, design-tokens, tokens.css. Writes `$ARTIFACTS_DIR/plan.md` as ordered steps with: File, Change, Verify (concrete command), Est. tool calls, Files to read first. Must have `expected_artifacts`.
+
+9. `estimate` (bash): Context budget check. `allow_failure: true`, `timeout: 30000`. Uses `$MODEL_CONTEXT` as inline substitution (NOT `process.env.MODEL_CONTEXT`). Uses `$ARTIFACTS_DIR` as inline substitution (NOT `process.env.ARTIFACTS_DIR`). Writes `context-estimate.md` if all goes well.
+
+### Modified Node Requirements
+
+10. `brief`: Add reading of `$ARTIFACTS_DIR/user-profile.json`. Add COMMUNICATION ADAPTATION block that adapts explanation depth based on `frontend_level`, `design_background`, and `communication_style`.
+
+11. `tokens`: Add reading of `$ARTIFACTS_DIR/user-profile.json`. Replace unconditional "use Tailwind v4 @theme syntax" with profile-conditional CSS approach:
+    - tailwind/you_decide → @theme syntax
+    - css_modules → :root custom properties with module-scoped imports
+    - vanilla_css → :root custom properties with fallbacks
+    - styled_components → ThemeProvider with JS theme object
+
+12. `inventory`: Add reading of `$ARTIFACTS_DIR/user-profile.json`. Add design_tools adaptation (figma: reference Figma conventions; none: be more prescriptive with dimensions).
+
+13. `gate-plan`: Update message from "begin implementation" to "proceed to PRD generation" (since PRD now comes after gate-plan).
+
+14. `implement`: Add reading of plan.md, context-estimate.md (optional — skip if missing), prd.md, user-profile.json. Add `$ARTIFACTS_DIR/implement-log.md` to `expected_artifacts`. Execute steps from plan.md with per-step logging.
+
+15. `review`: Add reading of user-profile.json, prd.md, plan.md, implement-log.md. Add USER ADAPTATION block (frontend_level-based review communication). Add ACCEPTANCE CRITERIA CHECK (verify each criterion from prd.md).
+
+16. `rework`: Add reading of `$ARTIFACTS_DIR/user-profile.json`. Add USER ADAPTATION block (frontend_level 1-3: explain fixes; 7-10: just fix and list).
+
+### Engine Constraints
+
+- Variable substitution: `$USER_MESSAGE`, `$ARTIFACTS_DIR`, `$REJECTION_REASON`, `$MODEL_ID`, `$MODEL_NAME`, `$MODEL_SIZE`, `$MODEL_CONTEXT`, `$MODEL_VISION` are text-replaced in ALL node fields before execution
+- `$REJECTION_REASON` is set by approval nodes with `on_reject: continue` and contains the user's rejection text (empty string if approved)
+- `fresh_context: true` opens a new LLM session — the model loses all memory and must read from disk
+- `expected_artifacts` checks file existence after node completion; retries once if missing
+- `allow_failure: true` on bash nodes means workflow continues on non-zero exit
+- Valid `on_reject` values: `cancel` (stop workflow), `rollback` (git stash), `continue` (proceed with $REJECTION_REASON)
+- Valid node types: `prompt`, `bash`, `approval`, `loop`, `cancel`
+
+---
+
+## Implementation
+
+### File: `.pi/workflows/web-design.yaml` (MODIFIED — 443 → 810 lines)
+
+```yaml
 name: web-design
 description: |
   Design-first frontend workflow with user calibration + PRD pipeline.
@@ -808,3 +909,29 @@ nodes:
       else
         echo "No HANDOFF.md in ARTIFACTS_DIR - skipping."
       fi
+```
+
+---
+
+## Evaluation Rubric
+
+Score each dimension 1–5 (1 = major issues, 5 = excellent). Provide specific evidence for each score.
+
+### 1. Correctness
+Does the workflow execute correctly given the engine's mechanics? Are variable substitutions valid? Do data flows (artifacts, $REJECTION_REASON) connect the right producers to consumers? Are there runtime failure paths?
+
+### 2. Spec Fidelity
+Does the implementation match every point in the specification? Are there missing nodes, extra nodes, or deviations from the stated requirements? Are all 16 specification points addressed?
+
+### 3. Code Quality
+Is the YAML clean, consistent, and maintainable? Are prompts clear and unambiguous for the LLM? Is there unnecessary duplication or complexity?
+
+### 4. Integration
+Does the workflow integrate cleanly with the existing engine? Does it follow established patterns (variable substitution, approval flow, fresh_context, expected_artifacts)? Are there breaking changes or side effects?
+
+### 5. Test Coverage
+Are there enough gates and verification points to catch failures? Are failure paths handled (allow_failure, optional artifacts, sentinel patterns)? What could fail silently?
+
+---
+
+**Output format:** For each dimension, provide the score and 2–3 sentences of evidence. End with an overall assessment: PASS (no dimension below 3, average >= 4) or FAIL (any dimension below 3, or average < 4).
