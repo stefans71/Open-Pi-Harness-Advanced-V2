@@ -102,6 +102,47 @@ bash scripts/init-project.sh ./my-app   # standalone — copies general workflow
 
 See [`docs/PROJECT-USAGE.md`](docs/PROJECT-USAGE.md) for full details, including the recommended dev/stable setup for extension developers.
 
+### Dev / Stable / Projects
+
+If you develop extensions AND use PI Agent on real projects, keep two clones:
+
+```
+                          GitHub
+                     stefans71/Open-Pi-
+                     Harness-Advanced-V2
+                           |
+             +-------------+-------------+
+             |  git push                 |  git pull
+             v                           v
+   +------------------+      +------------------+
+   |   DEV REPO       |      |  STABLE CLONE    |
+   |                  |      |                  |
+   |  Write code      |      |  Always on main  |
+   |  Run tests       |      |  setup.sh here   |
+   |  Review PRs      |      |                  |
+   +------------------+      +--------+---------+
+                                      |
+                          ~/.pi/agent/extensions/
+                              symlinks -> stable
+                                      |
+                  +-------------------+-------------------+
+                  |                   |                   |
+                  v                   v                   v
+          +-----------+       +-----------+       +-----------+
+          | Project A |       | Project B |       | Project C |
+          |           |       |           |       |           |
+          | .pi/      |       | .pi/      |       | .pi/      |
+          |  workflows|       |  workflows|       |  workflows|
+          |  memory.db|       |  memory.db|       |  memory.db|
+          |  skills/  |       |  skills/  |       |  skills/  |
+          +-----------+       +-----------+       +-----------+
+
+  Extensions = global (shared via symlinks)
+  Workflows, memory, skills = per-project (in .pi/)
+```
+
+Update stable after dev work: `cd pi-harness-stable && git pull && npm install`
+
 ## Extensions
 
 ### pi-memory -- Cross-Session RAG
