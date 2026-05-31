@@ -5,6 +5,7 @@ import { join, basename, dirname } from "path";
 import { fileURLToPath } from "url";
 import { validateWorkflow } from "./schema.js";
 import { WorkflowExecutor } from "./executor.js";
+import { WORKFLOW_CATEGORIES, findWorkflowSourceFromExtension, initNewProject, addToProject } from "./project-init.js";
 
 const WORKFLOW_DIRS = [".pi/workflows", "workflows"];
 
@@ -209,6 +210,76 @@ export default function (pi: ExtensionAPI) {
 
 				default:
 					ctx.ui.notify("Usage: /workflow [run|list|status|version]");
+			}
+		},
+	});
+
+	pi.registerCommand("project", {
+		description: "Create or initialize a project with PI Agent workflows: /project new <name>, /project add",
+		getArgumentCompletions: (prefix) => {
+			return ["new", "add"]
+				.filter((s) => s.startsWith(prefix))
+				.map((s) => ({ label: s, value: s }));
+		},
+		handler: async (args, ctx) => {
+			const parts = args.trim().split(/\s+/);
+			const subcommand = parts[0];
+
+			if (subcommand !== "new" && subcommand !== "add") {
+				ctx.ui.notify("Usage: /project new <name> or /project add");
+				return;
+			}
+
+			const sourceDir = findWorkflowSourceFromExtension();
+			if (!sourceDir) {
+				ctx.ui.notify("Could not find workflow source directory. Ensure .pi/workflows/ exists in the repo.", "error");
+				return;
+			}
+
+			const selectedWorkflows: string[] = [];
+			for (const category of WORKFLOW_CATEGORIES) {
+				const include = await ctx.ui.confirm(
+					"Include workflows",
+					`${category.label}?${category.defaultSelected ? " (recommended)" : ""}`,
+				);
+				if (include) {
+					selectedWorkflows.push(...category.workflows);
+				}
+			}
+
+			if (selectedWorkflows.length === 0) {
+				ctx.ui.notify("No workflows selected. Aborting.");
+				return;
+			}
+
+			if (subcommand === "new") {
+				const name = parts.slice(1).join(" ");
+				if (!name) {
+					ctx.ui.notify("Usage: /project new <name>");
+					return;
+				}
+				const targetDir = join(ctx.cwd, name);
+				if (existsSync(targetDir)) {
+					const proceed = await ctx.ui.confirm("Directory exists", `${targetDir} already exists. Add workflows to it?`);
+					if (!proceed) return;
+				}
+				const result = initNewProject(targetDir, selectedWorkflows, sourceDir);
+				pi.sendMessage({
+					customType: "project-init",
+					content: `## Project Created: ${name}\n\n- Directory: \`${targetDir}\`\n- Workflows copied: ${result.copied.join(", ")}\n- .gitignore: created\n- git: initialized\n\n**Next:** \`cd ${name} && pi\``,
+					display: true,
+				});
+			} else {
+				const result = addToProject(ctx.cwd, selectedWorkflows, sourceDir);
+				if (result.copied.length === 0) {
+					ctx.ui.notify("No matching workflow files found in source directory.", "warning");
+					return;
+				}
+				pi.sendMessage({
+					customType: "project-init",
+					content: `## PI Agent Added to Project\n\n- Workflows copied to \`.pi/workflows/\`: ${result.copied.join(", ")}\n- .gitignore: updated\n\nRestart PI Agent to pick up the new workflows.`,
+					display: true,
+				});
 			}
 		},
 	});

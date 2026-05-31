@@ -93,9 +93,14 @@ Edit `~/.pi/agent/models.json` with your model's endpoint — see the setup guid
 
 pi-memory defaults to `localhost:11434` (generation) and `localhost:8081` (embeddings). Override via config file at `.pi/extensions/pi-memory/config.json` or `~/.pi/agent/extensions/pi-memory/config.json`.
 
-### Using on Your Own Projects
+### Start a New Project
 
-See [`docs/PROJECT-USAGE.md`](docs/PROJECT-USAGE.md) for how to use PI Agent on separate projects, including the recommended dev/stable setup for extension developers.
+```
+/project new my-app       # inside PI Agent — interactive workflow selection
+bash scripts/init-project.sh ./my-app   # standalone — copies general workflows
+```
+
+See [`docs/PROJECT-USAGE.md`](docs/PROJECT-USAGE.md) for full details, including the recommended dev/stable setup for extension developers.
 
 ## Extensions
 

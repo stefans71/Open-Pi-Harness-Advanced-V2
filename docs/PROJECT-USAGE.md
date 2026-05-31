@@ -17,16 +17,37 @@ PI Agent loads extensions from `~/.pi/agent/extensions/` (set up once via `scrip
 
 ## Quick Start
 
+### Option A: Using the `/project` command (inside PI Agent)
+
+```
+/project new my-project
+```
+
+PI Agent prompts you to choose which workflow categories to include, then creates the project with `.pi/workflows/`, `.gitignore`, and `git init`.
+
+To add PI support to an existing project you're already working in:
+
+```
+/project add
+```
+
+### Option B: Using the standalone script (no PI required)
+
+```bash
+# From the repo directory:
+bash scripts/init-project.sh ./my-project
+
+# Copy all workflows (not just general-purpose):
+bash scripts/init-project.sh ./my-project --all
+```
+
+### Option C: Manual setup
+
 ```bash
 mkdir my-project && cd my-project
 git init
-
-# Copy workflows you want to use
 mkdir -p .pi/workflows
 cp /path/to/Open-Pi-Harness-Advanced-V2/.pi/workflows/code-task.yaml .pi/workflows/
-cp /path/to/Open-Pi-Harness-Advanced-V2/.pi/workflows/fix-bug.yaml .pi/workflows/
-
-# Start PI Agent
 pi
 ```
 
