@@ -171,10 +171,7 @@ nodes:
         small)  echo "lite" ;;
         medium) echo "hybrid" ;;
         large)  echo "full" ;;
-        *)
-          echo "WARNING: unexpected MODEL_SIZE='$MODEL_SIZE', defaulting to lite (safest)" >&2
-          echo "lite"
-          ;;
+        *)      echo "lite" ;;
       esac
 
   - id: resolve-dictionary
