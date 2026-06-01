@@ -1,14 +1,12 @@
 name: web-design
 description: |
-  Design-first frontend workflow with user calibration + PRD pipeline + UX standards dictionary.
-  Phase 0: scaffold, read-profile, calibrate, gate-calibrate, refine-profile, save-profile, resolve-dictionary.
-  Phase 1: brief, gate-brief.
-  Phase 2: tokens, inventory, gate-plan.
-  Phase 3: prd, gate-prd, plan, estimate.
-  Phase 4: implement, verify.
-  Phase 5: review, gate-final, rework, verify-rework, gate-rework.
-  Phase 6: persist-handoff.
-  24 nodes total. Each fresh_context node reads inputs from disk (ARTIFACTS_DIR + HANDOFF.md).
+  Model-adaptive frontend workflow with 3 execution tiers based on $MODEL_SIZE.
+  Phase 0 (shared): scaffold, read-profile, calibrate, gate-calibrate, refine-profile, save-profile, detect-tier, resolve-dictionary.
+  Full tier (large models): brief, gate-brief, tokens, inventory, gate-plan, prd, gate-prd, plan, estimate, implement, verify, review, gate-final, rework, verify-rework, gate-rework.
+  Hybrid tier (medium models): brief-hybrid, gate-brief-hybrid, design-and-plan, gate-plan-hybrid, implement-hybrid, verify-hybrid, gate-hybrid.
+  Lite tier (small models): implement-lite, verify-lite, gate-lite.
+  Shared end: persist-handoff.
+  Routing: detect-tier bash node bridges $MODEL_SIZE → when: conditions (small→lite, medium→hybrid, large→full).
 
 nodes:
 
@@ -166,6 +164,19 @@ nodes:
         echo "No profile artifact - skipping"
       fi
 
+  - id: detect-tier
+    type: bash
+    command: |
+      case "$MODEL_SIZE" in
+        small)  echo "lite" ;;
+        medium) echo "hybrid" ;;
+        large)  echo "full" ;;
+        *)
+          echo "WARNING: unexpected MODEL_SIZE='$MODEL_SIZE', defaulting to lite (safest)" >&2
+          echo "lite"
+          ;;
+      esac
+
   - id: resolve-dictionary
     type: bash
     command: |
@@ -224,6 +235,7 @@ nodes:
 
   - id: brief
     type: prompt
+    when: "$detect-tier.output == 'full'"
     allowed_tools: [read, write]
     expected_artifacts:
       - $ARTIFACTS_DIR/brief.md
@@ -292,6 +304,7 @@ nodes:
 
   - id: gate-brief
     type: approval
+    when: "$detect-tier.output == 'full'"
     capture_response: true
     on_reject: cancel
     message: |
@@ -311,6 +324,7 @@ nodes:
 
   - id: tokens
     type: prompt
+    when: "$detect-tier.output == 'full'"
     fresh_context: true
     allowed_tools: [read, write]
     expected_artifacts:
@@ -421,6 +435,7 @@ nodes:
 
   - id: inventory
     type: prompt
+    when: "$detect-tier.output == 'full'"
     fresh_context: true
     allowed_tools: [read, write]
     expected_artifacts:
@@ -508,6 +523,7 @@ nodes:
 
   - id: gate-plan
     type: approval
+    when: "$detect-tier.output == 'full'"
     capture_response: true
     on_reject: cancel
     message: |
@@ -527,6 +543,7 @@ nodes:
 
   - id: prd
     type: prompt
+    when: "$detect-tier.output == 'full'"
     fresh_context: true
     allowed_tools: [read, grep, find, ls, write]
     expected_artifacts:
@@ -579,6 +596,7 @@ nodes:
 
   - id: gate-prd
     type: approval
+    when: "$detect-tier.output == 'full'"
     capture_response: true
     on_reject: cancel
     message: |
@@ -595,6 +613,7 @@ nodes:
 
   - id: plan
     type: prompt
+    when: "$detect-tier.output == 'full'"
     fresh_context: true
     allowed_tools: [read, grep, find, ls, write]
     expected_artifacts:
@@ -634,6 +653,7 @@ nodes:
 
   - id: estimate
     type: bash
+    when: "$detect-tier.output == 'full'"
     allow_failure: true
     timeout: 30000
     command: |
@@ -668,6 +688,7 @@ nodes:
 
   - id: implement
     type: prompt
+    when: "$detect-tier.output == 'full'"
     fresh_context: true
     allowed_tools: [read, grep, find, ls, edit, write, bash]
     expected_artifacts:
@@ -762,6 +783,7 @@ nodes:
 
   - id: verify
     type: bash
+    when: "$detect-tier.output == 'full'"
     allow_failure: true
     timeout: 180000
     command: |
@@ -799,6 +821,7 @@ nodes:
 
   - id: review
     type: prompt
+    when: "$detect-tier.output == 'full'"
     fresh_context: true
     allowed_tools: [read, grep, find, ls, bash, write]
     prompt: |
@@ -892,6 +915,7 @@ nodes:
 
   - id: gate-final
     type: approval
+    when: "$detect-tier.output == 'full'"
     capture_response: true
     on_reject: continue
     message: |
@@ -904,6 +928,7 @@ nodes:
 
   - id: rework
     type: prompt
+    when: "$detect-tier.output == 'full'"
     fresh_context: true
     allowed_tools: [read, grep, find, ls, edit, write, bash]
     prompt: |
@@ -948,6 +973,7 @@ nodes:
 
   - id: verify-rework
     type: bash
+    when: "$detect-tier.output == 'full'"
     allow_failure: true
     timeout: 180000
     command: |
@@ -971,6 +997,7 @@ nodes:
 
   - id: gate-rework
     type: approval
+    when: "$detect-tier.output == 'full'"
     capture_response: true
     on_reject: rollback
     message: |
@@ -981,16 +1008,374 @@ nodes:
       APPROVE -> accept this slice. HANDOFF will be persisted.
       REJECT  -> all changes rolled back via git stash.
 
-  # ── Phase 6 — Persist ──────────────────────────────────────────────
+  # ── Hybrid Tier (medium models) ─────────────────────────────────────
+
+  - id: brief-hybrid
+    type: prompt
+    when: "$detect-tier.output == 'hybrid'"
+    allowed_tools: [read, write]
+    expected_artifacts:
+      - $ARTIFACTS_DIR/brief.md
+      - $ARTIFACTS_DIR/HANDOFF.md
+    prompt: |
+      You are in the DESIGN BRIEF phase for a medium-sized model workflow.
+      No code yet.
+
+      User request:
+      $USER_MESSAGE
+
+      Read $ARTIFACTS_DIR/user-profile.json for the user's preferences.
+      Check if a project-level handoff exists: read .pi/HANDOFF.md (if it exists).
+
+      Apply the Intent First methodology. Answer:
+        1. Who is the user and what is their context?
+        2. What is the primary action this UI must enable?
+        3. What does success feel like?
+        4. What domain vocabulary does this world use?
+        5. What makes this different from a generic app?
+
+      Write an Intent Statement:
+        "This [component/screen] helps [who] to [primary action] so they can [outcome].
+        It should feel [adjective]. The most important thing to get right is [constraint]."
+
+      Run Domain Exploration:
+        - Domain vocabulary: 5-8 concepts native to this domain
+        - Color world: 5 physical objects or environments -> color suggestions
+        - Signature element: one detail unique to this product
+        - Rejecting: 3 obvious design defaults -> replacements
+
+      Write direction to $ARTIFACTS_DIR/brief.md.
+
+      Initialize $ARTIFACTS_DIR/HANDOFF.md:
+        # HANDOFF
+        ## Project Overview
+        [one paragraph]
+        ## Completed So Far
+        [empty]
+        ## Current State
+        Briefing complete — awaiting design synthesis.
+        ## Breadcrumbs
+        [empty]
+
+      End with: "Does that direction feel right?"
+
+  - id: gate-brief-hybrid
+    type: approval
+    when: "$detect-tier.output == 'hybrid'"
+    capture_response: true
+    on_reject: cancel
+    message: |
+      Design brief written to $ARTIFACTS_DIR/brief.md
+
+      Review the direction — approve to proceed to combined design + planning.
+      Reject with reason to cancel.
+
+  - id: design-and-plan
+    type: prompt
+    when: "$detect-tier.output == 'hybrid'"
+    fresh_context: true
+    allowed_tools: [read, grep, find, ls, write]
+    expected_artifacts:
+      - $ARTIFACTS_DIR/design-tokens.md
+      - $ARTIFACTS_DIR/components.md
+      - $ARTIFACTS_DIR/prd.md
+      - $ARTIFACTS_DIR/plan.md
+    prompt: |
+      You are in the COMBINED DESIGN + PLANNING phase for a medium-model workflow.
+      You have NO memory of prior phases.
+
+      Read in this order:
+        1. $ARTIFACTS_DIR/HANDOFF.md         - project context
+        2. $ARTIFACTS_DIR/brief.md           - confirmed design direction
+        3. $ARTIFACTS_DIR/user-profile.json  - user preferences
+        4. $ARTIFACTS_DIR/ux-patterns.md     - UX code patterns for this css_approach
+
+      This is a consolidated node. Produce ALL of these artifacts in one pass:
+
+      1. DESIGN TOKENS ($ARTIFACTS_DIR/design-tokens.md):
+         Define the complete token system: colors (oklch), typography scale, spacing
+         (8px grid), motion tokens, radii, shadows, focus ring, z-layers.
+         Use domain-evocative names, not generic --blue-600.
+         Write actual CSS to design-system/tokens.css.
+
+      2. COMPONENT INVENTORY ($ARTIFACTS_DIR/components.md):
+         List all components needed. For each: purpose, file path, props interface,
+         variants, states, mobile layout, accessibility, acceptance criteria.
+         Order by dependency.
+
+      3. PRD ($ARTIFACTS_DIR/prd.md):
+         Goal, tech stack, requirements, files to create/modify, dependencies,
+         acceptance criteria (numbered, testable).
+
+      4. PLAN ($ARTIFACTS_DIR/plan.md):
+         Ordered steps, each with: file, change, verify command, est. tool calls.
+         Build in dependency order. Include test-writing steps.
+
+      Update $ARTIFACTS_DIR/HANDOFF.md with progress.
+
+  - id: gate-plan-hybrid
+    type: approval
+    when: "$detect-tier.output == 'hybrid'"
+    capture_response: true
+    on_reject: cancel
+    message: |
+      Design synthesis complete:
+        - $ARTIFACTS_DIR/design-tokens.md
+        - $ARTIFACTS_DIR/components.md
+        - $ARTIFACTS_DIR/prd.md
+        - $ARTIFACTS_DIR/plan.md
+
+      Review all artifacts. Approve to proceed to implementation.
+      Reject with reason to cancel.
+
+  - id: implement-hybrid
+    type: prompt
+    when: "$detect-tier.output == 'hybrid'"
+    fresh_context: true
+    allowed_tools: [read, grep, find, ls, edit, write, bash]
+    expected_artifacts:
+      - $ARTIFACTS_DIR/build-summary.md
+    prompt: |
+      You are in the IMPLEMENTATION phase. You have NO memory of prior phases.
+
+      Read in this order:
+        1. $ARTIFACTS_DIR/plan.md              - step-by-step guide
+        2. $ARTIFACTS_DIR/HANDOFF.md           - project context
+        3. $ARTIFACTS_DIR/prd.md               - requirements
+        4. $ARTIFACTS_DIR/user-profile.json    - user preferences
+        5. $ARTIFACTS_DIR/design-tokens.md     - token system
+        6. design-system/tokens.css            - actual token values
+        7. $ARTIFACTS_DIR/components.md        - component specs
+        8. $ARTIFACTS_DIR/ux-patterns.md       - UX patterns (COPY THESE EXACTLY)
+
+      Execute steps from plan.md in order. For each step:
+        1. Read required files
+        2. Make the change
+        3. Run the verify command
+        4. Fix failures (up to 3 attempts)
+
+      RULES:
+        - Mobile-first: base styles for 375px
+        - Touch targets: 48px minimum on interactive elements
+        - Use CSS variables from tokens, zero hardcoded hex
+        - All states: hover, active, focus-visible, disabled
+        - Reduced motion: handle prefers-reduced-motion
+        - Focus rings: :focus-visible, never suppressed
+
+      After each component, run typecheck. Append status to
+      $ARTIFACTS_DIR/build-summary.md.
+
+      When done: Update $ARTIFACTS_DIR/HANDOFF.md and output completion status.
+
+  - id: verify-hybrid
+    type: bash
+    when: "$detect-tier.output == 'hybrid'"
+    allow_failure: true
+    timeout: 180000
+    command: |
+      REPORT="$ARTIFACTS_DIR/quality-report.md"
+      printf '# Quality Report (Hybrid)\nGenerated: %s\n\n' "$(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')" > "$REPORT"
+      PASS=0; FAIL=0
+      run_check() {
+        local name="$1"; shift
+        printf '## %s\n' "$name" >> "$REPORT"
+        if "$@" >> "$REPORT" 2>&1; then
+          printf 'PASS\n\n' >> "$REPORT"; PASS=$((PASS+1))
+        else
+          printf 'FAIL\n\n' >> "$REPORT"; FAIL=$((FAIL+1))
+        fi
+      }
+      if [ -f package.json ]; then
+        run_check "TypeScript"  bun run typecheck
+        run_check "ESLint"      bun run lint
+        run_check "Unit tests"  bun run test -- --reporter=verbose
+        run_check "Vite build"  bun run build
+      else
+        run_check "HTML output" test -f index.html
+        run_check "File size" test "$(wc -c < index.html 2>/dev/null || echo 0)" -gt 2000
+      fi
+      printf '---\nSummary: %d passed, %d failed\n' "$PASS" "$FAIL" >> "$REPORT"
+      echo "Quality: $PASS passed, $FAIL failed"
+
+  - id: gate-hybrid
+    type: approval
+    when: "$detect-tier.output == 'hybrid'"
+    capture_response: true
+    on_reject: cancel
+    message: |
+      Hybrid tier implementation complete.
+        Quality report at $ARTIFACTS_DIR/quality-report.md
+        Build summary at $ARTIFACTS_DIR/build-summary.md
+
+      Approve to finalize. Reject to cancel.
+
+  # ── Lite Tier (small models) ──────────────────────────────────────
+
+  - id: implement-lite
+    type: prompt
+    when: "$detect-tier.output == 'lite'"
+    allowed_tools: [write]
+    expected_artifacts:
+      - index.html
+    prompt: |
+      You are implementing the final UI in a single file for a small-model-safe workflow.
+
+      Your job:
+      - Create exactly one complete, production-usable front-end entry file.
+      - Write index.html — a single self-contained HTML file with embedded <style>.
+      - Use a single write tool call.
+      - Do not ask follow-up questions.
+      - Do not read files.
+      - Do not emit explanations.
+
+      Project inputs:
+      - User request: $USER_MESSAGE
+      - Tech stack: $TECH_STACK
+      - Output path: index.html
+
+      Output rules:
+      - Write a single self-contained index.html with embedded <style> and minimal optional <script>.
+      - The page must be complete, responsive, accessible, and visually polished.
+      - No placeholder lorem ipsum — all copy should be specific to the user's request.
+      - Do not reference missing assets, packages, build tools, or external fonts.
+
+      Design system rules you must apply:
+
+      1. Use CSS custom properties for all key visual tokens. Define in :root:
+         Required tokens:
+         --color-primary, --color-primary-lt, --color-primary-dk, --color-on-primary
+         --color-ink, --color-ink-muted, --color-canvas, --color-surface
+         --color-border, --color-accent, --color-error
+
+      2. Typography system (define as CSS custom properties):
+         --text-h1: 2.25rem/2.75rem, 700
+         --text-h2: 1.75rem/2.25rem, 700
+         --text-h3: 1.25rem/1.75rem, 600
+         --text-body: 1rem/1.5rem, 400
+         --text-button: 0.9375rem/1.25rem, 600
+         --text-caption: 0.875rem/1.25rem, 400
+
+      3. Spacing scale (8px grid):
+         --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+         --space-5: 20px; --space-6: 24px; --space-8: 32px; --space-16: 64px;
+
+      4. Motion tokens:
+         --duration-fast: 150ms; --duration-normal: 200ms;
+         --ease-out: cubic-bezier(0, 0, 0.2, 1);
+
+      5. Radii: --radius-sm: 0.5rem; --radius-md: 0.75rem; --radius-lg: 1rem;
+         Shadows: --shadow-sm: 0 1px 2px rgba(0,0,0,0.05); --shadow-md: 0 4px 6px rgba(0,0,0,0.07);
+
+      6. Interactive elements:
+         - Minimum height 48px on all buttons, links, inputs
+         - Clear hover, active, and disabled states
+         - Rounded corners ~12px
+         - Short transition ~150ms
+         - Visible pointer cursor
+
+      7. Focus: :focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+         Apply to buttons, links, inputs, selects, textareas.
+
+      8. Reduced motion:
+         @media (prefers-reduced-motion: reduce) {
+           *, *::before, *::after {
+             animation-duration: 0.01ms !important;
+             transition-duration: 0.01ms !important;
+           }
+         }
+
+      9. Responsive: mobile-first (375px base).
+         @media (min-width: 768px) for tablet.
+         @media (min-width: 1024px) for desktop.
+
+      10. Form controls (if needed):
+          - Each input must have a real <label> with for/id pairing
+          - Use aria-describedby for helper/error text
+          - Inputs min-height 48px, full-width where appropriate
+
+      11. Cards:
+          - background: var(--color-canvas); border using --color-border
+          - Comfortable padding, radius ~16px
+          - Subtle shadow for hierarchy
+
+      Implementation requirements:
+      - Semantic HTML5: <header>, <main>, <footer>
+      - Strong hero section with primary CTA
+      - 2-5 supporting sections based on the product
+      - Skip link for accessibility
+      - All tokens in :root, base reset rules
+      - At least one responsive breakpoint
+      - No frameworks, no external dependencies
+
+      Write the complete file now to index.html in one tool call.
+
+  - id: verify-lite
+    type: bash
+    when: "$detect-tier.output == 'lite'"
+    allow_failure: true
+    timeout: 60000
+    command: |
+      FILE="index.html"
+      PASS=0; FAIL=0; REPORT="$ARTIFACTS_DIR/quality-report-lite.md"
+      printf '# Quality Report (Lite)\nGenerated: %s\n\n' "$(date '+%Y-%m-%d %H:%M')" > "$REPORT"
+
+      check() {
+        local name="$1"; shift
+        printf '## %s\n' "$name" >> "$REPORT"
+        if "$@" >> "$REPORT" 2>&1; then
+          printf 'PASS\n\n' >> "$REPORT"; PASS=$((PASS+1))
+        else
+          printf 'FAIL\n\n' >> "$REPORT"; FAIL=$((FAIL+1))
+        fi
+      }
+
+      check "File exists" test -f "$FILE"
+      check "File size >2000 chars" test "$(wc -c < "$FILE" 2>/dev/null || echo 0)" -gt 2000
+      check "DOCTYPE" grep -qi '<!doctype html>' "$FILE"
+      check "HTML lang" grep -qi '<html[^>]*lang=' "$FILE"
+      check "Viewport meta" grep -qi '<meta[^>]*name=.viewport.' "$FILE"
+      check "Main element" grep -qi '<main' "$FILE"
+      check "Embedded styles" grep -qi '<style' "$FILE"
+      check ":root tokens" grep -q ':root' "$FILE"
+      check "Color tokens" grep -q '\-\-color-primary' "$FILE"
+      check "Spacing tokens" grep -q '\-\-space-4' "$FILE"
+      check "Typography tokens" grep -q '\-\-text-h1' "$FILE"
+      check "Focus visible" grep -q ':focus-visible' "$FILE"
+      check "Reduced motion" grep -q 'prefers-reduced-motion' "$FILE"
+      check "Touch targets" grep -Eq 'min-height:[[:space:]]*48px|min-height:[[:space:]]*3rem' "$FILE"
+      check "Has CTA" grep -Eqi '<button|<a[^>]*href=' "$FILE"
+      check "No external deps" bash -c '! grep -Eqi "https://fonts\.googleapis\.com|cdn\.tailwindcss\.com|unpkg\.com|cdnjs\.cloudflare\.com" "$0"' "$FILE"
+
+      if grep -Eqi '<form|<input|<select|<textarea' "$FILE"; then
+        check "Form labels" grep -Eqi '<label[^>]*for=' "$FILE"
+      fi
+
+      printf '---\nSummary: %d passed, %d failed\n' "$PASS" "$FAIL" >> "$REPORT"
+      echo "Lite verify: $PASS passed, $FAIL failed"
+
+  - id: gate-lite
+    type: approval
+    when: "$detect-tier.output == 'lite'"
+    capture_response: true
+    on_reject: cancel
+    message: |
+      Lite tier output: index.html
+      Quality report at $ARTIFACTS_DIR/quality-report-lite.md
+
+      Open index.html in a browser to review.
+      Approve to finalize. Reject to cancel.
+
+  # ── Shared End — Persist ──────────────────────────────────────────
 
   - id: persist-handoff
     type: bash
     allow_failure: true
     command: |
+      mkdir -p .pi
       if [ -f "$ARTIFACTS_DIR/HANDOFF.md" ]; then
-        mkdir -p .pi
         cp "$ARTIFACTS_DIR/HANDOFF.md" .pi/HANDOFF.md
         echo "HANDOFF persisted to .pi/HANDOFF.md for next slice."
       else
-        echo "No HANDOFF.md in ARTIFACTS_DIR - skipping."
+        printf '# HANDOFF\n## Current State\nLite tier run completed. Output: index.html\n## Completed So Far\nSingle-file HTML generated from lite workflow.\n' > .pi/HANDOFF.md
+        echo "Wrote minimal HANDOFF for lite tier."
       fi
