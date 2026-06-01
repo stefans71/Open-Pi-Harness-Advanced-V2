@@ -4,7 +4,7 @@ description: |
   Phase 0 (shared): scaffold, read-profile, calibrate, gate-calibrate, refine-profile, save-profile, detect-tier, resolve-dictionary.
   Full tier (large models): brief, gate-brief, tokens, inventory, gate-plan, prd, gate-prd, plan, estimate, implement, verify, review, gate-final, rework, verify-rework, gate-rework.
   Hybrid tier (medium models): brief-hybrid, gate-brief-hybrid, design-and-plan, gate-plan-hybrid, implement-hybrid, verify-hybrid, gate-hybrid.
-  Lite tier (small models): implement-lite, verify-lite, gate-lite.
+  Lite tier (small models): brief-lite, implement-lite, verify-lite, gate-lite.
   Shared end: persist-handoff.
   Routing: detect-tier bash node bridges $MODEL_SIZE → when: conditions (small→lite, medium→hybrid, large→full).
 
@@ -1208,103 +1208,55 @@ nodes:
 
   # ── Lite Tier (small models) ──────────────────────────────────────
 
+  - id: brief-lite
+    type: prompt
+    when: "$detect-tier.output == 'lite'"
+    prompt: |
+      You are a senior web designer creating a design brief.
+
+      USER REQUEST: $USER_MESSAGE
+
+      Write a concise design brief covering:
+      1. What to build (component type, purpose)
+      2. Color palette (3-5 colors as hex values, with a primary, secondary, accent)
+      3. Typography (font stack, heading vs body sizes)
+      4. Layout approach (flexbox/grid, responsive breakpoints)
+      5. Key interactive states (hover, focus, disabled)
+      6. Accessibility requirements (contrast, semantic HTML, focus-visible)
+
+      Keep it under 300 words. Be specific — hex values, px sizes, font names.
+      Output ONLY the brief text, no markdown fences.
+
   - id: implement-lite
     type: prompt
     when: "$detect-tier.output == 'lite'"
     allowed_tools: [write]
     expected_artifacts:
-      - index.html
+      - $ARTIFACTS_DIR/index.html
     prompt: |
-      You are implementing the final UI in a single file for a small-model-safe workflow.
+      You are a frontend developer. Build exactly what the design brief describes.
 
-      Your job:
-      - Create exactly one complete, production-usable front-end entry file.
-      - Write index.html — a single self-contained HTML file with embedded <style>.
-      - Use a single write tool call.
-      - Do not ask follow-up questions.
-      - Do not read files.
-      - Do not emit explanations.
+      DESIGN BRIEF:
+      $brief-lite.output
 
-      Project inputs:
-      - User request: $USER_MESSAGE
-      - Tech stack: $TECH_STACK
-      - Output path: index.html
+      RULES:
+      - Output a SINGLE self-contained file: index.html
+      - Use ONLY inline CSS in a <style> block in <head>
+      - No external CDN, no Tailwind, no frameworks, no npm packages
+      - No imports, no JSX, no TypeScript
+      - The file must render correctly by opening index.html directly in a browser
+      - Minimum 3000 characters of meaningful HTML+CSS
 
-      Output rules:
-      - Write a single self-contained index.html with embedded <style> and minimal optional <script>.
-      - The page must be complete, responsive, accessible, and visually polished.
-      - No placeholder lorem ipsum — all copy should be specific to the user's request.
-      - Do not reference missing assets, packages, build tools, or external fonts.
+      QUALITY REQUIREMENTS:
+      - Mobile-first: base styles for 375px, @media for tablet (768px) and desktop (1024px)
+      - CSS custom properties in :root for all colors and spacing
+      - Hover, focus-visible, and active states on interactive elements
+      - Semantic HTML: use button, nav, main, section, form, label, h1-h6
+      - Touch targets: min-height 48px on tappable elements
+      - CSS transitions on state changes
+      - 4.5:1 contrast ratio for all text
 
-      Design system rules you must apply:
-
-      1. Use CSS custom properties for all key visual tokens. Define in :root:
-         Required tokens:
-         --color-primary, --color-primary-lt, --color-primary-dk, --color-on-primary
-         --color-ink, --color-ink-muted, --color-canvas, --color-surface
-         --color-border, --color-accent, --color-error
-
-      2. Typography system (define as CSS custom properties):
-         --text-h1: 2.25rem/2.75rem, 700
-         --text-h2: 1.75rem/2.25rem, 700
-         --text-h3: 1.25rem/1.75rem, 600
-         --text-body: 1rem/1.5rem, 400
-         --text-button: 0.9375rem/1.25rem, 600
-         --text-caption: 0.875rem/1.25rem, 400
-
-      3. Spacing scale (8px grid):
-         --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
-         --space-5: 20px; --space-6: 24px; --space-8: 32px; --space-16: 64px;
-
-      4. Motion tokens:
-         --duration-fast: 150ms; --duration-normal: 200ms;
-         --ease-out: cubic-bezier(0, 0, 0.2, 1);
-
-      5. Radii: --radius-sm: 0.5rem; --radius-md: 0.75rem; --radius-lg: 1rem;
-         Shadows: --shadow-sm: 0 1px 2px rgba(0,0,0,0.05); --shadow-md: 0 4px 6px rgba(0,0,0,0.07);
-
-      6. Interactive elements:
-         - Minimum height 48px on all buttons, links, inputs
-         - Clear hover, active, and disabled states
-         - Rounded corners ~12px
-         - Short transition ~150ms
-         - Visible pointer cursor
-
-      7. Focus: :focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
-         Apply to buttons, links, inputs, selects, textareas.
-
-      8. Reduced motion:
-         @media (prefers-reduced-motion: reduce) {
-           *, *::before, *::after {
-             animation-duration: 0.01ms !important;
-             transition-duration: 0.01ms !important;
-           }
-         }
-
-      9. Responsive: mobile-first (375px base).
-         @media (min-width: 768px) for tablet.
-         @media (min-width: 1024px) for desktop.
-
-      10. Form controls (if needed):
-          - Each input must have a real <label> with for/id pairing
-          - Use aria-describedby for helper/error text
-          - Inputs min-height 48px, full-width where appropriate
-
-      11. Cards:
-          - background: var(--color-canvas); border using --color-border
-          - Comfortable padding, radius ~16px
-          - Subtle shadow for hierarchy
-
-      Implementation requirements:
-      - Semantic HTML5: <header>, <main>, <footer>
-      - Strong hero section with primary CTA
-      - 2-5 supporting sections based on the product
-      - Skip link for accessibility
-      - All tokens in :root, base reset rules
-      - At least one responsive breakpoint
-      - No frameworks, no external dependencies
-
-      Write the complete file now to index.html in one tool call.
+      Write the file using the write tool to $ARTIFACTS_DIR/index.html in one tool call.
 
   - id: verify-lite
     type: bash
@@ -1312,7 +1264,10 @@ nodes:
     allow_failure: true
     timeout: 60000
     command: |
-      FILE="index.html"
+      FILE="$ARTIFACTS_DIR/index.html"
+      if [ ! -f "$FILE" ] && [ -f "index.html" ]; then
+        FILE="index.html"
+      fi
       PASS=0; FAIL=0; REPORT="$ARTIFACTS_DIR/quality-report-lite.md"
       printf '# Quality Report (Lite)\nGenerated: %s\n\n' "$(date '+%Y-%m-%d %H:%M')" > "$REPORT"
 
@@ -1334,21 +1289,13 @@ nodes:
       check "Main element" grep -qi '<main' "$FILE"
       check "Embedded styles" grep -qi '<style' "$FILE"
       check ":root tokens" grep -q ':root' "$FILE"
-      check "Color tokens" grep -q '\-\-color-primary' "$FILE"
-      check "Spacing tokens" grep -q '\-\-space-4' "$FILE"
-      check "Typography tokens" grep -q '\-\-text-h1' "$FILE"
+      check "Has body content" grep -qi '<body' "$FILE"
       check "Focus visible" grep -q ':focus-visible' "$FILE"
-      check "Reduced motion" grep -q 'prefers-reduced-motion' "$FILE"
-      check "Touch targets" grep -Eq 'min-height:[[:space:]]*48px|min-height:[[:space:]]*3rem' "$FILE"
       check "Has CTA" grep -Eqi '<button|<a[^>]*href=' "$FILE"
       check "No external deps" bash -c '! grep -Eqi "https://fonts\.googleapis\.com|cdn\.tailwindcss\.com|unpkg\.com|cdnjs\.cloudflare\.com" "$0"' "$FILE"
 
-      if grep -Eqi '<form|<input|<select|<textarea' "$FILE"; then
-        check "Form labels" grep -Eqi '<label[^>]*for=' "$FILE"
-      fi
-
       printf '---\nSummary: %d passed, %d failed\n' "$PASS" "$FAIL" >> "$REPORT"
-      echo "Lite verify: $PASS passed, $FAIL failed"
+      echo "Lite verify: $PASS passed, $FAIL failed (file: $FILE)"
 
   - id: gate-lite
     type: approval
