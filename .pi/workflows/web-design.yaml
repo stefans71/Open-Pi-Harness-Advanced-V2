@@ -1240,7 +1240,7 @@ nodes:
       $brief-lite.output
 
       RULES:
-      - Output a SINGLE self-contained file: index.html
+      - Output a SINGLE self-contained file: $ARTIFACTS_DIR/index.html
       - Use ONLY inline CSS in a <style> block in <head>
       - No external CDN, no Tailwind, no frameworks, no npm packages
       - No imports, no JSX, no TypeScript
