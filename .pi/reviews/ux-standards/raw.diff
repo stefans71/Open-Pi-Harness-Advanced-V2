@@ -1,0 +1,294 @@
+diff --git a/.pi/workflows/web-design.yaml b/.pi/workflows/web-design.yaml
+index 17911a9..7363b73 100644
+--- a/.pi/workflows/web-design.yaml
++++ b/.pi/workflows/web-design.yaml
+@@ -1,14 +1,14 @@
+ name: web-design
+ description: |
+-  Design-first frontend workflow with user calibration + PRD pipeline.
+-  Phase 0: scaffold, read-profile, calibrate, gate-calibrate, refine-profile, save-profile.
++  Design-first frontend workflow with user calibration + PRD pipeline + UX standards dictionary.
++  Phase 0: scaffold, read-profile, calibrate, gate-calibrate, refine-profile, save-profile, resolve-dictionary.
+   Phase 1: brief, gate-brief.
+   Phase 2: tokens, inventory, gate-plan.
+   Phase 3: prd, gate-prd, plan, estimate.
+   Phase 4: implement, verify.
+   Phase 5: review, gate-final, rework, verify-rework, gate-rework.
+   Phase 6: persist-handoff.
+-  23 nodes total. Each fresh_context node reads inputs from disk (ARTIFACTS_DIR + HANDOFF.md).
++  24 nodes total. Each fresh_context node reads inputs from disk (ARTIFACTS_DIR + HANDOFF.md).
+ 
+ nodes:
+ 
+@@ -166,6 +166,60 @@ nodes:
+         echo "No profile artifact - skipping"
+       fi
+ 
++  - id: resolve-dictionary
++    type: bash
++    command: |
++      APPROACH="tailwind"
++      if [ -f "$ARTIFACTS_DIR/user-profile.json" ]; then
++        DETECTED=$(node -e "
++          const p = JSON.parse(require('fs').readFileSync('$ARTIFACTS_DIR/user-profile.json','utf8'));
++          console.log(p.preferences?.css_approach || 'tailwind');
++        " 2>/dev/null)
++        if [ -n "$DETECTED" ]; then APPROACH="$DETECTED"; fi
++      fi
++
++      case "$APPROACH" in
++        tailwind|you_decide)  SECTION="tailwind" ; NOTE="" ;;
++        css_modules)          SECTION="css_modules" ; NOTE="" ;;
++        vanilla_css)          SECTION="css_modules" ; NOTE="NOTE: These patterns use CSS Modules syntax. For vanilla CSS, replace module imports with global BEM-prefixed classes (e.g., .ui-button). All CSS custom properties and @media queries are identical.\n\n" ;;
++        styled_components)    SECTION="tailwind" ; NOTE="NOTE: These patterns use Tailwind utilities in JSX className strings. For styled-components, convert each utility to its CSS property equivalent in a styled template literal. Example: className=\"min-h-12 rounded-xl px-5\" becomes styled.button\`min-height: var(--touch-min); border-radius: var(--radius-md); padding: 0 var(--space-5);\`. Focus rings, transitions, and reduced-motion rules use the same CSS properties.\n\n" ;;
++        *)                    SECTION="tailwind" ; NOTE="" ;;
++      esac
++
++      DICT=".pi/ux-dictionary.md"
++      if [ ! -f "$DICT" ]; then
++        echo "ERROR: .pi/ux-dictionary.md not found"
++        exit 1
++      fi
++
++      if [ -n "$NOTE" ]; then
++        printf "$NOTE" > "$ARTIFACTS_DIR/ux-patterns.md"
++      else
++        : > "$ARTIFACTS_DIR/ux-patterns.md"
++      fi
++
++      awk -v section="$SECTION" '
++        /^\#\# \[approach:/ {
++          if (index($0, "[approach:" section "]")) { found=1; next }
++          else { found=0 }
++        }
++        found { print }
++      ' "$DICT" >> "$ARTIFACTS_DIR/ux-patterns.md"
++
++      LINES=$(wc -l < "$ARTIFACTS_DIR/ux-patterns.md")
++      if [ "$LINES" -lt 5 ]; then
++        echo "WARNING: Only $LINES lines for $SECTION — falling back to tailwind"
++        : > "$ARTIFACTS_DIR/ux-patterns.md"
++        awk '
++          /^\#\# \[approach:tailwind\]/ { found=1; next }
++          /^\#\# \[approach:/ { found=0 }
++          found { print }
++        ' "$DICT" > "$ARTIFACTS_DIR/ux-patterns.md"
++        LINES=$(wc -l < "$ARTIFACTS_DIR/ux-patterns.md")
++      fi
++
++      echo "Resolved $LINES lines of UX patterns for: $APPROACH (section: $SECTION)"
++
+   # ── Phase 1 — Design ───────────────────────────────────────────────
+ 
+   - id: brief
+@@ -269,6 +323,7 @@ nodes:
+         1. $ARTIFACTS_DIR/HANDOFF.md         - project context
+         2. $ARTIFACTS_DIR/brief.md           - confirmed design direction
+         3. $ARTIFACTS_DIR/user-profile.json  - user preferences
++        4. $ARTIFACTS_DIR/ux-patterns.md     - code examples for this css_approach
+ 
+       Define the COMPLETE design token system for this project.
+ 
+@@ -286,12 +341,59 @@ nodes:
+         Do they sound like they belong to this product's world?
+         If any could belong to any app, rename them.
+ 
++      TYPOGRAPHY SCALE (define ALL in tokens.css):
++        | Token          | Size             | Line-height      | Weight |
++        |----------------|------------------|------------------|--------|
++        | --text-h1      | 2.25rem (36px)   | 2.75rem (44px)   | 700    |
++        | --text-h2      | 1.75rem (28px)   | 2.25rem (36px)   | 700    |
++        | --text-h3      | 1.25rem (20px)   | 1.75rem (28px)   | 600    |
++        | --text-body    | 1rem (16px)      | 1.5rem (24px)    | 400    |
++        | --text-button  | 0.9375rem (15px) | 1.25rem (20px)   | 600    |
++        | --text-caption | 0.875rem (14px)  | 1.25rem (20px)   | 400    |
++        Copy widths: --prose-max: 42rem (672px), --content-max: 80rem (1280px)
++
++      SPACING SCALE (define ALL in tokens.css, 8px grid):
++        | Token      | Value | Token      | Value |
++        |------------|-------|------------|-------|
++        | --space-1  | 4px   | --space-6  | 24px  |
++        | --space-2  | 8px   | --space-8  | 32px  |
++        | --space-3  | 12px  | --space-10 | 40px  |
++        | --space-4  | 16px  | --space-12 | 48px  |
++        | --space-5  | 20px  | --space-16 | 64px  |
++
++      MOTION TOKENS (define ALL in tokens.css):
++        | Token              | Value                        |
++        |--------------------|------------------------------|
++        | --duration-fast    | 150ms                        |
++        | --duration-normal  | 200ms                        |
++        | --duration-slow    | 300ms                        |
++        | --ease-out         | cubic-bezier(0, 0, 0.2, 1)   |
++        | --ease-in-out      | cubic-bezier(0.4, 0, 0.2, 1) |
++        | --skeleton-pulse   | 1.5s ease-in-out infinite     |
++
++      LAYER TOKENS:
++        --z-sticky: 100, --z-popover: 400, --z-modal: 500
++
+       ALSO DEFINE:
+-        - Typography scale (base 0.9375rem/15px for outdoor readability)
+-        - Spacing scale (4px base unit: --space-1 through --space-16)
+-        - Touch target: --touch-min: 3rem (48px WCAG 2.2 minimum)
+-        - Border radius (--radius-sm through --radius-full)
+-        - Shadows (--shadow-sm, --shadow-md, --shadow-lg)
++        - Touch target: --touch-min: 3rem (48px)
++        - Radius: --radius-sm (8px), --radius-md (12px), --radius-lg (16px), --radius-full (9999px)
++        - Shadows: --shadow-sm (subtle), --shadow-md (card), --shadow-lg (elevated)
++        - Borders: --border-1 (1px), --border-2 (2px emphasis)
++        - Focus: --focus-ring-width (2px), --focus-ring-offset (2px)
++        - On-primary: --color-on-primary (text color on --color-primary backgrounds)
++        - Semantic feedback: --color-error/-success/-warning/-info (each with -fg and -bg pairing)
++
++      COLOR ACCESSIBILITY (hard requirements):
++        - Normal text: 4.5:1 contrast on its background (WCAG AA)
++        - Large text (18px+ or 14px+ bold): 3:1 minimum
++        - Essential UI boundaries: 3:1 minimum
++        - Muted text must still meet 4.5:1 on its actual background
++
++      REDUCED MOTION (document in design-tokens.md):
++        - Non-essential animation disabled under prefers-reduced-motion
++        - Opacity-only transitions acceptable as reduced alternatives
++
++      Reference $ARTIFACTS_DIR/ux-patterns.md for how components use these tokens.
+ 
+       CSS APPROACH (from user profile):
+       If css_approach is "tailwind" or "you_decide": use Tailwind v4 @theme syntax
+@@ -330,6 +432,7 @@ nodes:
+         2. $ARTIFACTS_DIR/brief.md           - design direction
+         3. $ARTIFACTS_DIR/design-tokens.md   - token system
+         4. $ARTIFACTS_DIR/user-profile.json  - user preferences
++        5. $ARTIFACTS_DIR/ux-patterns.md     - code examples for this css_approach
+ 
+       List ALL components needed for this slice.
+       This is Run 1 - primitives: Button, Badge, Skeleton, Card.
+@@ -349,6 +452,44 @@ nodes:
+             2. [testable check]
+             3. [testable check]
+ 
++      Read $ARTIFACTS_DIR/ux-patterns.md for exact implementation patterns.
++
++      COMPONENT SIZE SPECIFICATIONS (use these exact values):
++
++      Button sizes:
++        | Size | Height | Horiz padding | Font            |
++        |------|--------|---------------|-----------------|
++        | sm   | 32px   | 12px          | 14px / weight-600 |
++        | md   | 40px   | 16px          | 16px / weight-600 |
++        | lg   | 48px   | 20px          | 16px / weight-600 |
++        Primary CTAs on mobile: lg (48px = touch-min).
++        See button-states pattern in ux-patterns.md for full code.
++
++      Badge: px-3 py-1, text-xs (12px), weight-500, rounded-full. Display-only.
++
++      Skeleton: must match final layout dimensions. See skeleton-pulse in ux-patterns.md.
++
++      Card: padding var(--space-8), radius var(--radius-lg), shadow var(--shadow-md).
++        Interactive cards ONLY get hover elevation — see card-elevation in ux-patterns.md.
++        Static cards: shadow-md, no hover.
++
++      Form inputs: min-height 44px, 48px for primary mobile forms.
++        See form-controls pattern in ux-patterns.md for label + input + error layout.
++
++      INTERACTION STATES (all interactive components):
++        | State         | Required change                                |
++        |---------------|------------------------------------------------|
++        | hover         | visible change in fill, border, or elevation   |
++        | active        | pressed feel — darker fill or reduced elevation|
++        | focus-visible | focus ring — see focus-ring in ux-patterns.md  |
++        | disabled      | reduced emphasis, preserved legibility          |
++        Native `disabled` on <button>/<input>/<select>/<textarea>.
++        `aria-disabled` only on custom non-native controls.
++        See disabled-native-vs-aria in ux-patterns.md.
++
++      REDUCED MOTION: every animated component must handle prefers-reduced-motion.
++        See reduced-motion pattern in ux-patterns.md.
++
+       If design_tools is "figma": reference Figma component naming conventions.
+         Mention that the user can export assets.
+       If design_tools is "none": be more prescriptive about visual specifications.
+@@ -544,6 +685,7 @@ nodes:
+         7. design-system/tokens.css            - actual token values (READ THIS FILE)
+         8. $ARTIFACTS_DIR/components.md        - component list + acceptance criteria
+         9. src/utils/cn.ts                     - cn() helper you must use
++        10. $ARTIFACTS_DIR/ux-patterns.md    - UX code patterns (COPY THESE EXACTLY)
+ 
+       If $ARTIFACTS_DIR/context-estimate.md does not exist, skip context budget
+       warnings and proceed normally.
+@@ -568,6 +710,29 @@ nodes:
+         - Use cn() from @/utils/cn for conditional className construction
+         - Zero hardcoded hex values. Zero hardcoded px sizes outside the token system.
+ 
++      UX PATTERNS (from ux-patterns.md — follow these exactly):
++        - Copy the button-states pattern for every Button variant
++        - Copy the card-elevation pattern for interactive Cards
++        - Copy the skeleton-pulse pattern for Skeleton components
++        - Copy the focus-ring pattern for every interactive element
++        - Copy the form-controls pattern for any input/select/textarea
++        - Apply the reduced-motion pattern to every animated element
++        - Use the responsive-container pattern for page layout
++        - Use the touch-target pattern for icon-only buttons
++
++      MOTION (mandatory):
++        - Every hover/focus change MUST use transition with motion tokens
++        - Every animation MUST include reduced-motion fallback
++
++      RESPONSIVE (mandatory):
++        - Base = mobile (375px), md: for tablet, lg: for desktop
++        - No horizontal overflow at 375px
++
++      ACCESSIBILITY (non-negotiable):
++        - focus-visible: always present, never suppressed
++        - Native disabled on native controls
++        - All text 4.5:1 contrast on its background
++
+       After EACH component, write a Vitest test (src/components/ui/ComponentName.test.tsx):
+         - Render test: renders without throwing
+         - Props test: key variants render correct DOM
+@@ -580,9 +745,14 @@ nodes:
+             ComponentName OK - src/components/ui/ComponentName.tsx + test
+ 
+       MANDATE CHECK before marking each component done:
+-        [] Touch targets >= 48px on all interactive elements
+-        [] All interactive states present (hover, focus-visible, disabled)
+-        [] Zero hardcoded values - only tokens or Tailwind utilities
++        [] Touch targets >= 48px on interactive elements (min-h-12)
++        [] All states present (hover, active, focus-visible, disabled)
++        [] Transitions use motion tokens (--duration-fast, --ease-out)
++        [] focus-visible has ring — not suppressed
++        [] Zero hardcoded values — tokens or utilities only
++        [] Responsive: no overflow at 375px
++        [] Reduced motion handled (motion-reduce: on all animations)
++        [] Native disabled on native controls
+         [] TypeScript: bun run typecheck passes
+ 
+       When all 4 components are done:
+@@ -645,6 +815,7 @@ nodes:
+         8. $ARTIFACTS_DIR/prd.md               - acceptance criteria to verify
+         9. $ARTIFACTS_DIR/plan.md              - what was planned vs. what was built
+         10. $ARTIFACTS_DIR/implement-log.md    - step completion status
++        11. $ARTIFACTS_DIR/ux-patterns.md      - patterns that were prescribed
+ 
+       For EACH component (Button, Badge, Skeleton, Card), check:
+ 
+@@ -669,6 +840,20 @@ nodes:
+         [] Buttons have accessible names?
+         [] ARIA roles on custom interactive elements?
+ 
++      UX PATTERN VERIFICATION (check against ux-patterns.md):
++        [] Every interactive element has hover + active + focus-visible + disabled?
++        [] Focus ring present on all interactive elements, not suppressed?
++        [] Motion tokens used consistently across components?
++        [] Reduced motion handled? (motion-reduce: or @media prefers-reduced-motion)
++        [] Interactive cards have shadow transition? Static cards do not?
++        [] Skeleton has pulse with reduced-motion fallback?
++        [] Touch targets meet 48px on primary interactive elements?
++        [] Typography follows token scale?
++        [] No horizontal overflow at 375px?
++        [] Native disabled on native controls?
++        [] Color tokens used — no ad-hoc hex values for text colors?
++        [] Form inputs follow form-controls pattern if present?
++
+       Score each: PASS / FAIL / WARN with file:line for FAIL items.
+ 
+       Overall score 1-10:
