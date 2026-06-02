@@ -2,392 +2,311 @@
 
 ## What This Is
 
-Head-to-head comparison: **100 prompts**, same scoring rubric, two generation methods:
+Can a structured design pipeline make a local 27B model produce frontend components
+that rival GPT-5.4's quality improvements?
 
-| Condition | Model | Method | Expected Tier |
-|---|---|---|---|
-| **G** | Qwen3.6-27B Dense | V2 Pi harness (full tier) | `large` → full 16-node workflow |
-| **H** | Qwen3.6-27B Dense | Direct API (brief → implement) | Two API calls, no Pi session |
+**100 prompts** run through the `web-design-benchmark` workflow (8-node Pi harness pipeline)
+on Qwen3.6-27B Dense MTP, then scored by GPT-5.4 on a /10 design rubric. Results compared
+against the V1 baseline where GPT-5.4 critiqued the same model's raw output.
 
-The 27B model should route to the **full tier** in the adaptive workflow (detect-tier → "full"),
-which includes: brief → design tokens → component inventory → PRD → plan → implement → review → rework.
-This is the tier that was designed for capable models — the 8B tests only ever hit the lite tier.
-
-### Why Re-Test
-
-The original V1 dataset was built with this pipeline:
-```
-100 prompts × 5 temperatures (run0-run4) = 500 components
-
-For each component:
-1. Qwen3.6-27B-MTP generated HTML via llama-server on AutoDL 5090  → component.html
-2. Playwright rendered desktop (1280×900) + mobile (390×844) screenshots
-3. GPT-5.4 (Codex) critiqued the screenshot                       → critique.md
-4. GPT-5.4 rewrote the HTML with expert improvements               → improved.html
-5. All packaged into JSONL training records                         → dataset-final.jsonl (3,090 records)
-```
-
-**We never tested the V2 Pi harness on the 27B.** The 8B tests (Conditions C/D) hit the lite
-tier and failed due to tool-use truncation. The 27B has the context window (32K) and
-tool-calling ability the full tier requires.
-
-### Original V1 Baseline Data
-
-The raw 27B output (component.html) and Codex-improved output (improved.html) already exist:
-
-```
-Location: /root/tinkering/Local-LLMs/Local-LLM-Agent/frontend-design-dataset/output/assets/components/
-Structure: component-NNN-runX/ → component.html, improved.html, critique.md, 
-           screenshot-desktop.png, screenshot-mobile.png, metadata.json
-```
-
-| Metric | component.html (raw 27B) | improved.html (Codex-improved) |
+| Condition | What | Avg Score |
 |---|---|---|
-| File count | 500 | 475 |
-| Avg size | 8,434 chars | 9,284 chars |
-| Min/max | 3,558 / 16,246 | 3,028 / 33,902 |
-| Improvement ratio | — | 1.10x |
-
-**This test compares:** Does the V2 Pi harness + 27B produce better HTML than the raw 27B
-did in V1? And does it get closer to what Codex-improved output looks like?
+| V1 raw 27B (baseline) | component.html, no harness, T=0.7 | **5.81/10** (91 run0 prompts scored) |
+| V1 improved (ceiling) | improved.html, GPT-5.4 rewrote | **8.60/9** (~9.5/10 equivalent) |
+| **Harness (this test)** | index.html via 8-node pipeline | **???** |
 
 ---
 
-## Methodology — Keep Data Clean
+## V1 Baseline Dataset
 
-### CRITICAL: Naming Convention
+### Database
 
-The original V1 pipeline used this flow:
-```
-Prompt → Qwen-27B → original.html → Playwright → screenshot → Codex critique → improved.html
-```
+All V1 data lives in a SQLite database on the VPS:
 
-The V2 harness re-test uses:
 ```
-Prompt → V2 Pi Harness (full tier, Qwen-27B) → harness-output.html → Playwright → screenshot → GPT-5.4 score
-Prompt → Direct API (Qwen-27B, no harness) → direct-output.html → Playwright → screenshot → GPT-5.4 score
+/root/tinkering/Local-LLMs/Local-LLM-Agent/frontend-design-dataset/output/db/dataset.sqlite
 ```
 
-**DO NOT mix these up.** Use these exact folder names:
+**Tables:**
+- `components` — 500 rows (100 prompts x 5 temps). Fields: id, prompt, temperature, run,
+  component_html, critique_text, improved_html, has_html, has_improved, has_critique
+- `eval_scores` — 500 rows. Fields: component_id, visual_score (/3), alignment_score (/3),
+  interactivity_score (/3), total (/9). **These score the improved.html, NOT the raw output.**
+- `conversations` — conversation data (not used for this test)
+
+### Two Scoring Systems (Don't Confuse Them)
+
+| System | What it scores | Scale | Where |
+|---|---|---|---|
+| **Critique score** | Raw 27B output (component.html) | /10, design review | `components.critique_text` (parse "Score: N/10") |
+| **Eval score** | GPT-5.4 improved output (improved.html) | /9 (visual+alignment+interactivity) | `eval_scores` table |
+
+**The critique score is the correct baseline for this test.** The harness output will be
+scored the same way — GPT-5.4 design critique of the screenshot, /10 scale.
+
+### Querying Baseline Scores
+
+Per-prompt critique scores for run0 (maps to our 100 test prompts):
+```sql
+sqlite3 /root/tinkering/Local-LLMs/Local-LLM-Agent/frontend-design-dataset/output/db/dataset.sqlite "
+SELECT
+  id,
+  CAST(REPLACE(SUBSTR(critique_text, INSTR(critique_text, 'Score: ') + 7, 2), '/', '') AS INTEGER) as score
+FROM components
+WHERE run = 'run0'
+  AND critique_text IS NOT NULL AND critique_text != ''
+  AND INSTR(critique_text, 'Score:') > 0
+ORDER BY id
+"
+```
+
+Overall baseline stats:
+```sql
+-- 91 of 100 run0 prompts have critique scores
+-- Avg: 5.81/10, Min: 4, Max: 7
+-- Distribution: 4s=12, 5s=24, 6s=87, 7s=17 (across all 140 scored components)
+```
+
+Per-prompt spread across temperatures:
+```sql
+sqlite3 /root/tinkering/Local-LLMs/Local-LLM-Agent/frontend-design-dataset/output/db/dataset.sqlite "
+SELECT
+  substr(c.id, 1, 13) as prompt_base,
+  COUNT(*) as runs,
+  MIN(cs) as min, MAX(cs) as max, MAX(cs)-MIN(cs) as spread, ROUND(AVG(cs),2) as avg
+FROM (
+  SELECT c.id,
+    CAST(REPLACE(SUBSTR(c.critique_text, INSTR(c.critique_text,'Score: ')+7,2),'/','' ) AS INTEGER) as cs
+  FROM components c
+  WHERE c.critique_text IS NOT NULL AND c.critique_text != '' AND INSTR(c.critique_text,'Score:')>0
+) sub
+JOIN components c ON sub.id = c.id
+GROUP BY substr(c.id, 1, 13)
+ORDER BY spread DESC
+"
+```
+
+### Raw Files
+
+```
+/root/tinkering/Local-LLMs/Local-LLM-Agent/frontend-design-dataset/output/assets/components/
+  component-NNN-runX/
+    component.html          ← Raw 27B output (V1 baseline)
+    improved.html           ← GPT-5.4 rewrite (quality ceiling)
+    critique.md             ← GPT-5.4 design critique of raw output (/10)
+    screenshot-desktop.png  ← 1280x900 rendered screenshot
+    screenshot-mobile.png   ← 390x844 mobile screenshot
+    metadata.json           ← Generation metadata
+```
+
+Eval scores JSONL (one line per component, scores the improved.html):
+```
+/root/tinkering/Local-LLMs/Local-LLM-Agent/frontend-design-dataset/output/eval/scores.jsonl
+```
+
+### V1 Pipeline
+
+```
+100 prompts x 5 temperatures (run0-run4) = 500 components
+
+For each:
+1. Qwen3.6-27B-MTP → llama-server (T=0.7, no thinking)  → component.html
+2. Playwright rendered screenshots (desktop + mobile)
+3. GPT-5.4 critiqued the screenshot                       → critique.md (score /10)
+4. GPT-5.4 rewrote HTML with improvements                 → improved.html
+5. All packaged into JSONL training records                → dataset-final.jsonl
+```
+
+---
+
+## V2 Harness Test (This Test)
+
+### Workflow: web-design-benchmark.yaml
+
+8-node pipeline designed for single-HTML-file component generation:
+
+```
+brief → tokens → implement → verify → review → gate-final → rework → verify-rework
+```
+
+| Node | Type | Fresh Context | What It Does |
+|---|---|---|---|
+| brief | prompt | no | Intent First methodology, domain exploration, color world, design decisions |
+| tokens | prompt | yes | Complete CSS custom property system (:root block) with domain-evocative names |
+| implement | prompt | yes | Builds single self-contained HTML file using tokens from brief + token phases |
+| verify | bash | — | Automated checks: file exists, >3000 chars, DOCTYPE, body, style, viewport, media queries, no CDN, hover, focus-visible |
+| review | prompt | yes | Hostile senior engineer review: design conformance, mobile-first, states, craft, a11y |
+| gate-final | approval | — | Auto-rejects in -p mode (on_reject: continue), rework runs regardless |
+| rework | prompt | yes | Fixes FAIL items from review, surgical changes only |
+| verify-rework | bash | — | Final size/structure check, copies to artifacts |
+
+The full 24-node `web-design.yaml` workflow was designed for multi-file component projects.
+This benchmark variant targets single-HTML output matching the test prompt format.
+
+Workflow file: `/.pi/workflows/web-design-benchmark.yaml` (relative to harness root)
+
+### Smoke Test Results (component-002, Shipfast pricing card)
+
+- Pipeline time: **525 seconds (~8.75 min)**
+- Output: **22,333 chars** (vs 8,434 avg for V1 raw)
+- Verify: **12/12 automated checks passed**
+- Review: **6/10** (27B self-review) — found hardcoded values, broken click handler, scope creep
+- Rework: **14 items fixed** — added missing disabled state, replaced hardcoded hex, fixed DOM mutation
+
+### Batch Runner
+
+`batch-harness.py` runs all 100 prompts through the benchmark workflow:
+
+```bash
+# On AutoDL 5090:
+export PATH="/root/autodl-tmp/node-v22.15.0-linux-x64/bin:$PATH"
+cd /root/autodl-tmp/pi-harness-stable
+
+# Full run (in screen)
+screen -S harness-batch
+python3 qwen-27b-dense-re-test-W-v2-pi-harness/batch-harness.py --port 11434
+
+# Resume from prompt N:
+python3 qwen-27b-dense-re-test-W-v2-pi-harness/batch-harness.py --port 11434 --start 50
+
+# Quick 3-prompt validation:
+python3 qwen-27b-dense-re-test-W-v2-pi-harness/batch-harness.py --port 11434 --count 3
+```
+
+- **Timeout:** 15 min per prompt (pipeline averages ~9 min on 27B)
+- **Resume:** Skips components that already have `harness-output.html > 500 bytes`
+- **Cleanup:** Deletes stale workflow artifacts between runs
+- **Expected total time:** ~15 hours for 100 prompts
+
+---
+
+## Directory Structure
 
 ```
 qwen-27b-dense-re-test-W-v2-pi-harness/
+├── CLAUDE.md                          ← Claude Code session context
 ├── README.md                          ← This file
-├── condition-G-harness/               ← V2 harness outputs
-│   ├── component-012-run0/
-│   │   ├── harness-output.html        ← HTML from Pi harness full tier
+├── batch-harness.py                   ← Condition G runner (8-node workflow)
+├── batch-direct.py                    ← Condition H runner (direct API, 2 calls) — NOT USED
+├── condition-G-harness/               ← Harness outputs
+│   ├── component-NNN-run0/
+│   │   ├── harness-output.html        ← HTML from benchmark workflow
 │   │   ├── harness-desktop.png        ← Rendered screenshot (1280x900)
-│   │   ├── brief.md                   ← Harness brief output (if captured)
-│   │   └── artifacts/                 ← Full workflow artifacts from .pi/workflow-artifacts/
-│   ├── component-014-run0/
-│   │   └── ...
+│   │   └── artifacts/                 ← Workflow artifacts (brief.md, tokens, review, etc.)
 │   └── summary.json                   ← Batch results summary
-├── condition-H-direct/                ← Direct API outputs (no harness)
-│   ├── component-012-run0/
-│   │   ├── direct-output.html         ← HTML from direct API call
-│   │   └── direct-desktop.png         ← Rendered screenshot (1280x900)
-│   ├── component-014-run0/
-│   │   └── ...
-│   └── summary.json
+├── condition-H-direct/                ← NOT USED (V1 raw output already exists)
 ├── scores/
-│   ├── condition-G-scores.jsonl       ← GPT-5.4 scores for harness outputs
-│   ├── condition-H-scores.jsonl       ← GPT-5.4 scores for direct outputs
-│   └── comparison.md                  ← Final comparison table
+│   ├── condition-G-scores.jsonl       ← GPT-5.4 critique scores for harness outputs
+│   └── comparison.md                  ← Final comparison vs V1 baseline
 └── prompts/
-    └── test-prompts.json              ← Copy of the 10 test prompts (for reproducibility)
+    ├── all-100-prompts.json           ← Full 100 prompts
+    └── test-prompts.json              ← 10-prompt subset
 ```
 
 ### File Naming Rules
 
-- **harness-output.html** = generated by Pi harness workflow
-- **direct-output.html** = generated by direct API call (no Pi)
+- **harness-output.html** = generated by Pi harness benchmark workflow
 - **harness-desktop.png** = screenshot of harness output
-- **direct-desktop.png** = screenshot of direct output
-- NEVER name both `output.html` — you'll overwrite one with the other
+- **direct-output.html** = generated by direct API call (legacy, not used)
 
 ---
 
-## AutoDL Setup — RTX 5090 (westd)
+## AutoDL Setup — RTX 5090
 
 ### Instance
 
 ```bash
-# SSH (check AutoDL web UI for current port — changes on reboot)
-ssh -i /root/.ssh/id_ed25519 -p <PORT> root@connect.westd.seetacloud.com
+# SSH — port changes on reboot, check AutoDL web UI
+# As of 2026-06-02: westc, port 33472
+ssh -p 33472 root@connect.westc.seetacloud.com
 ```
 
 ### Model
 
-Qwen3.6-27B Dense MTP (19GB GGUF). Location on the 5090 instance:
-
+Qwen3.6-27B Dense MTP (19GB GGUF):
 ```
 /root/autodl-tmp/Qwen3.6-27B-MTP-UD-Q5_K_XL.gguf
 ```
 
-If this file was moved to archive, check:
-```
-/root/autodl-tmp/archive/Qwen3.6-27B-MTP-UD-Q5_K_XL.gguf
-```
-
-NOTE: On the 3080 Ti instance (westb), this file was archived. It may need to be
-re-downloaded or copied to the 5090 instance. The 5090 instance (westd) should
-already have it from the V1 pipeline.
-
-### Start llama-server for 27B
+### Start llama-server
 
 ```bash
-# On RTX 5090 (westd):
-/root/autodl-tmp/llama-mtp/bin/llama-server \
+/root/autodl-tmp/llama-mtp/build/bin/llama-server \
   -m /root/autodl-tmp/Qwen3.6-27B-MTP-UD-Q5_K_XL.gguf \
   -ngl 99 -c 32768 --no-mmap -np 1 \
   --host 0.0.0.0 --port 11434 \
   > /tmp/server-27b.log 2>&1 &
 
-# Wait and verify
 curl http://localhost:11434/health   # → {"status":"ok"}
+# VRAM usage: ~21.8 GB / 32 GB
 ```
 
-**NOTE on 5090:** The root `llama-mtp/bin/llama-server` binary targets sm_120 (RTX 5090).
-Use it directly — do NOT use the `build-ampere/bin/llama-server` (that's for the 3080 Ti).
+**Binary path note:** Use `llama-mtp/build/bin/llama-server` (not `llama-mtp/bin/llama-server`
+which doesn't exist on the current instance).
 
-### Sampling Parameters (Qwen3 Paper)
+### Sampling (Qwen3 Paper)
 
-27B with thinking mode ON (default):
-```
-temperature: 0.6
-top_p: 0.95
-top_k: 20
-```
+Thinking mode ON (default): `temperature: 0.6, top_p: 0.95, top_k: 20`
 
-If thinking is disabled via `--chat-template-kwargs '{"enable_thinking":false}'`:
-```
-temperature: 0.7
-top_p: 0.8
-top_k: 20
-```
+### Pi Agent Config
 
-**Recommendation:** Use thinking mode ON for the 27B. The paper shows 60% code quality
-drop without thinking. The 27B has enough context (32K) to think + generate.
+Pi harness on AutoDL: `/root/autodl-tmp/pi-harness-stable/`
+Extensions symlinked from: `~/.pi/agent/extensions/` → `/root/autodl-tmp/pi-harness-stable/extensions/`
 
-### Pi Agent Setup (for Condition G)
+models.json model ID: `qwen3.6-27b-mtp`
+
+**Config values that matter:**
+- `reasoning: false` — Pi's reasoning format wastes tokens; server handles thinking via chat template
+- `contextWindow: 32768`
+- `maxTokens: 16384`
+- `defaultThinkingLevel: "off"` in settings.json
+
+### Provisioning from VPS
 
 ```bash
-# On the 5090 instance:
-export PATH="/root/autodl-tmp/node-v22.15.0-linux-x64/bin:$PATH"
+# 1. Rsync harness (from VPS)
+rsync -avz --exclude='node_modules' --exclude='.git' --exclude='dist' \
+  -e "ssh -p <PORT>" \
+  /root/tinkering/Local-LLMs/Local-LLM-Agent/pi-harness-stable/ \
+  root@connect.westc.seetacloud.com:/root/autodl-tmp/pi-harness-stable/
 
-# Ensure Pi is installed
-which pi   # should show a path
-
-# Verify the V2 harness workflows are in place
-ls /root/autodl-tmp/pi-harness-stable/.pi/workflows/web-design.yaml
-
-# If not, rsync from VPS:
-# (run from VPS)
-rsync -avz --exclude='node_modules' --exclude='.git' \
-  -e "ssh -i /root/.ssh/id_ed25519 -p <PORT>" \
-  /root/tinkering/Local-LLMs/Local-LLM-Agent/Open-Pi-Harness-Advanced-V2/ \
-  root@connect.westd.seetacloud.com:/root/autodl-tmp/pi-harness-stable/
-
-# Fix tsconfig paths (VPS vs AutoDL)
-find /root/autodl-tmp/pi-harness-stable -name "tsconfig.json" -exec \
-  sed -i "s|/usr/lib/node_modules|/root/autodl-tmp/node-v22.15.0-linux-x64/lib/node_modules|g" {} +
-
-# Build extensions
-for ext in pi-memory pi-orchestrator pi-skills pi-workflows; do
-  cd /root/autodl-tmp/pi-harness-stable/extensions/$ext && npx tsc --outDir dist
-done
-
-# Copy yaml module (workspace hoisting fix)
-cp -r /root/autodl-tmp/pi-harness-stable/node_modules/yaml \
-  /root/autodl-tmp/pi-harness-stable/extensions/pi-workflows/node_modules/yaml
-
-# Re-link extensions
-for ext in pi-memory pi-orchestrator pi-skills pi-workflows; do
-  rm -rf /root/.pi/agent/extensions/$ext
-  ln -s /root/autodl-tmp/pi-harness-stable/extensions/$ext /root/.pi/agent/extensions/$ext
-done
-```
-
-### Pi models.json for 27B
-
-```bash
-cat > /root/.pi/agent/models.json << 'EOF'
-{
-  "providers": {
-    "llama-server": {
-      "baseUrl": "http://localhost:11434/v1",
-      "apiKey": "none",
-      "models": [{
-        "id": "Qwen3.6-27B-MTP-UD-Q5_K_XL.gguf",
-        "name": "Qwen3.6-27B Dense MTP",
-        "api": "openai-completions",
-        "reasoning": false,
-        "input": ["text"],
-        "contextWindow": 32768,
-        "maxTokens": 16384,
-        "compat": {
-          "timeout": 7200000
-        },
-        "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
-      }]
-    }
-  }
-}
-EOF
-
-cat > /root/.pi/agent/settings.json << 'EOF'
-{
-  "defaultProvider": "llama-server",
-  "defaultModel": "Qwen3.6-27B-MTP-UD-Q5_K_XL.gguf",
-  "defaultThinkingLevel": "off"
-}
-EOF
-```
-
-**IMPORTANT:** Set `reasoning: false` in models.json. Even though the 27B uses thinking
-at the server level, Pi's `reasoning: true` wastes output tokens. The server handles thinking
-via the chat template, not via Pi's reasoning format.
-
----
-
-## Running the Tests
-
-### Prompts
-
-**100 prompts** — the same prompts used to build the V1 training dataset.
-Extracted from the SQLite DB (`components WHERE run='run0'`).
-
-Files in `prompts/`:
-- `all-100-prompts.json` — Full 100 prompts (for Conditions G and H)
-- `test-prompts.json` — 10-prompt subset (for quick validation, same as 8B tests)
-
-Sample prompts:
-```
-component-000-run0: Show me a sign-up button for a SaaS app in three states...
-component-001-run0: Make an email newsletter signup form for a design blog...
-component-002-run0: Design a pricing card for the Pro plan of a startup app...
-```
-
-Copy prompts to the 5090 instance:
-```bash
-# From VPS:
-scp -i /root/.ssh/id_ed25519 -P <PORT> \
-  /root/tinkering/Local-LLMs/Local-LLM-Agent/pi-harness-stable/qwen-27b-dense-re-test-W-v2-pi-harness/prompts/all-100-prompts.json \
-  root@connect.westd.seetacloud.com:/root/autodl-tmp/all-100-prompts.json
-```
-
----
-
-## Running the Tests — Automated Scripts
-
-### Smoke Test First (1 prompt)
-
-Before running 100 prompts, verify everything works:
-
-```bash
-# On the 5090 instance:
+# 2. On AutoDL: install, fix paths, build
 export PATH="/root/autodl-tmp/node-v22.15.0-linux-x64/bin:$PATH"
 cd /root/autodl-tmp/pi-harness-stable
+npm install
+find extensions -name "tsconfig.json" -exec \
+  sed -i "s|/usr/lib/node_modules|/root/autodl-tmp/node-v22.15.0-linux-x64/lib/node_modules|g" {} +
+for ext in pi-memory pi-orchestrator pi-skills pi-workflows; do
+  cd extensions/$ext && npx tsc --outDir dist --noImplicitAny false && cd ../..
+done
 
-# Condition G smoke test
-pi --model Qwen3.6-27B-MTP-UD-Q5_K_XL.gguf -p \
-  "/workflow run web-design Build a simple login form with email and password fields"
+# 3. Copy yaml module (workspace hoisting fix)
+mkdir -p extensions/pi-workflows/node_modules
+cp -r node_modules/yaml extensions/pi-workflows/node_modules/yaml
 
-# Check:
-# 1. detect-tier should output "full" (not "lite") — look in events.jsonl
-# 2. index.html should be >5000 chars with <body> and </html>
-# 3. Workflow should run: brief → tokens → inventory → PRD → implement → review
-
-# If detect-tier routes to "lite": the regex /\b(\d+(?:\.\d+)?)\s*b\b/i should match
-# "27B" in the GGUF filename. If not, patch detect-tier or set $MODEL_SIZE manually.
-```
-
-### Condition G — Automated Batch (V2 Harness)
-
-```bash
-# Copy batch script to AutoDL
-scp -i /root/.ssh/id_ed25519 -P <PORT> \
-  /root/tinkering/Local-LLMs/Local-LLM-Agent/pi-harness-stable/qwen-27b-dense-re-test-W-v2-pi-harness/batch-harness.py \
-  root@connect.westd.seetacloud.com:/root/autodl-tmp/batch-harness.py
-
-# Also copy prompts
-scp -i /root/.ssh/id_ed25519 -P <PORT> \
-  /root/tinkering/Local-LLMs/Local-LLM-Agent/pi-harness-stable/qwen-27b-dense-re-test-W-v2-pi-harness/prompts/all-100-prompts.json \
-  root@connect.westd.seetacloud.com:/root/autodl-tmp/all-100-prompts.json
-
-# Run on AutoDL (in screen for safety)
-screen -S harness-batch
-export PATH="/root/autodl-tmp/node-v22.15.0-linux-x64/bin:$PATH"
-python3 /root/autodl-tmp/batch-harness.py --port 11434
-
-# Resume from prompt 50 if interrupted:
-python3 /root/autodl-tmp/batch-harness.py --port 11434 --start 50
-```
-
-**NOTE:** batch-harness.py expects `prompts/all-100-prompts.json` relative to the script.
-Either copy the whole directory structure, or symlink the prompts file. The script
-has resume support — it skips components that already have `harness-output.html > 500 bytes`.
-
-**Timeout:** 10 minutes per prompt (full tier can be slow on 27B). Expect ~2-5 min per prompt
-= 3-8 hours for 100 prompts.
-
-### Condition H — Automated Batch (Direct API)
-
-```bash
-# Copy batch-direct.py to AutoDL
-scp -i /root/.ssh/id_ed25519 -P <PORT> \
-  /root/tinkering/Local-LLMs/Local-LLM-Agent/pi-harness-stable/qwen-27b-dense-re-test-W-v2-pi-harness/batch-direct.py \
-  root@connect.westd.seetacloud.com:/root/autodl-tmp/batch-direct.py
-
-# Run (thinking ON by default for 27B)
-screen -S direct-batch
-python3 /root/autodl-tmp/batch-direct.py --port 11434
-
-# Resume from prompt 50:
-python3 /root/autodl-tmp/batch-direct.py --port 11434 --start 50
-```
-
-**Faster than Condition G** — no Pi overhead, just 2 API calls per prompt.
-Expect ~1-2 min per prompt = 1.5-3 hours for 100 prompts.
-
-### Running Both Sequentially
-
-```bash
-# Run H first (faster, validates API is working)
-screen -S batch
-python3 /root/autodl-tmp/batch-direct.py --port 11434 && \
-python3 /root/autodl-tmp/batch-harness.py --port 11434
+# 4. Re-link extensions
+for ext in pi-memory pi-orchestrator pi-skills pi-workflows; do
+  rm -rf ~/.pi/agent/extensions/$ext
+  ln -s /root/autodl-tmp/pi-harness-stable/extensions/$ext ~/.pi/agent/extensions/$ext
+done
 ```
 
 ---
 
-## Scoring (on VPS)
+## Scoring Pipeline (on VPS)
 
-### Step 1: Rsync Results to VPS
+### Step 1: Rsync Results from AutoDL
 
 ```bash
-# From VPS:
-rsync -avz -e "ssh -i /root/.ssh/id_ed25519 -p <PORT>" \
-  root@connect.westd.seetacloud.com:/root/autodl-tmp/batch-results/27b-direct/ \
-  /root/tinkering/Local-LLMs/Local-LLM-Agent/pi-harness-stable/qwen-27b-dense-re-test-W-v2-pi-harness/condition-H-direct/
-
-# And for harness results (Condition G):
-rsync -avz -e "ssh -i /root/.ssh/id_ed25519 -p <PORT>" \
-  root@connect.westd.seetacloud.com:/root/autodl-tmp/batch-results/27b-harness/ \
+rsync -avz -e "ssh -p <PORT>" \
+  root@connect.westc.seetacloud.com:/root/autodl-tmp/pi-harness-stable/qwen-27b-dense-re-test-W-v2-pi-harness/condition-G-harness/ \
   /root/tinkering/Local-LLMs/Local-LLM-Agent/pi-harness-stable/qwen-27b-dense-re-test-W-v2-pi-harness/condition-G-harness/
 ```
 
-### Step 2: Render Screenshots (on VPS)
+### Step 2: Render Screenshots with Playwright
 
 ```bash
-cd /root/tinkering/Local-LLMs/Local-LLM-Agent/frontend-design-dataset
-# Use the render-and-score-harness.ts — update paths to point at the 27B results
-bun run src/render-and-score-harness.ts
-```
-
-Or render manually with Playwright:
-```bash
-# For each HTML file:
+# Per file (desktop 1280x900):
 bun -e "
 const { chromium } = require('playwright');
 (async () => {
@@ -401,92 +320,85 @@ const { chromium } = require('playwright');
 "
 ```
 
-### Step 3: Score with GPT-5.4 (Codex)
+### Step 3: Score with GPT-5.4
+
+Use the same /10 design critique rubric as V1. Score the screenshot, not the HTML.
 
 ```bash
-# Ensure Codex is authenticated
-codex exec -m gpt-5.4 --dangerously-bypass-approvals-and-sandbox --ephemeral "Say hello" < /dev/null
-
-# If auth expired:
-codex logout && codex login --device-auth
-
-# Score each screenshot
 codex exec -m gpt-5.4 --dangerously-bypass-approvals-and-sandbox --ephemeral \
   "You are a senior product designer reviewing a UI component screenshot.
 Provide a structured design critique covering:
-1. Visual hierarchy
-2. Spacing & layout
-3. Typography
-4. Color
-5. Component completeness
-6. Production readiness
+1. Visual hierarchy  2. Spacing & layout  3. Typography
+4. Color  5. Component completeness  6. Production readiness
 Score 1-10. Be specific." \
   -i /path/to/harness-desktop.png < /dev/null
 ```
+
+### Step 4: Compare
+
+Harness scores (condition-G-scores.jsonl) vs V1 critique scores from the SQLite DB.
+Target: beat 5.81/10 avg across the 100 prompts.
 
 ---
 
 ## Comparison Table (Fill In After Testing)
 
-### 10-Prompt Subset (for quick comparison with 8B results)
-
-| Component | Cat | A (Base 8B) | B (FT 8B) | G (27B+Harness) | H (27B Direct) | V1 raw 27B |
-|---|---|---|---|---|---|---|
-| component-012 | form | 5 | 6.5 | | | exists |
-| component-014 | form | 5 | 5 | | | exists |
-| component-002 | card | 5 | 6 | | | exists |
-| component-028 | card | 5 | 5 | | | exists |
-| component-003 | navbar | 4 | 4 | | | exists |
-| component-021 | navbar | 4 | 3 | | | exists |
-| component-078 | mobile | 1 | 6 | | | exists |
-| component-084 | mobile | 5 | 6.5 | | | exists |
-| component-072 | marketing | 6 | 6.5 | | | exists |
-| component-065 | data_display | 5 | 6.5 | | | exists |
-| **Average** | | **4.50** | **5.50** | **???** | **???** | — |
-
-### Full 100-Prompt Results (G vs H only)
-
-| Metric | G (27B + Harness) | H (27B Direct) |
-|---|---|---|
-| Success rate | /100 | /100 |
-| Avg chars | | |
-| Avg GPT-5.4 score | | |
-| Has `<body>` tag | /100 | /100 |
-| Avg generation time | | |
-
 ### What We're Testing
 
-1. **G > H?** → Does the V2 harness full tier add quality? (design tokens, PRD, review cycle)
-2. **G > B?** → Does 27B + harness beat fine-tuned 8B? (bigger model + pipeline vs fine-tuning)
-3. **H > A?** → Does raw 27B beat base 8B? (model scale alone)
-4. **H vs B?** → Raw 27B vs fine-tuned 8B? (is fine-tuning worth it vs bigger model?)
-5. **G vs V1?** → Does harness 27B beat V1 raw 27B? (same model, with/without harness)
+1. **Harness > V1 raw?** → Does the 8-node pipeline (5.81 baseline) improve output quality?
+2. **Harness close to V1 improved?** → Can structured prompting approach GPT-5.4 rewrite quality?
+3. **Where does it help most?** → Which categories (form, card, navbar, mobile, marketing, data_display) benefit most from the pipeline?
 
-### V1 Baseline Reference
+### 10-Prompt Subset (quick comparison with 8B results)
 
-The V1 raw 27B outputs (component.html) are the original training data source.
-To compare G/H against V1 raw 27B, score the existing component.html files:
-```
-/root/tinkering/Local-LLMs/Local-LLM-Agent/frontend-design-dataset/output/assets/components/component-NNN-run0/component.html
-```
-These were generated with temp=0.7 via llama-server, no thinking mode, no harness.
-The improved.html in the same dirs is the Codex-improved version (our quality ceiling).
+| Component | Cat | A (Base 8B) | B (FT 8B) | G (27B+Harness) | V1 critique |
+|---|---|---|---|---|---|
+| component-012 | form | 5 | 6.5 | | 7 |
+| component-014 | form | 5 | 5 | | — |
+| component-002 | card | 5 | 6 | | 6 |
+| component-028 | card | 5 | 5 | | 6 |
+| component-003 | navbar | 4 | 4 | | 4 |
+| component-021 | navbar | 4 | 3 | | 5 |
+| component-078 | mobile | 1 | 6 | | — |
+| component-084 | mobile | 5 | 6.5 | | — |
+| component-072 | marketing | 6 | 6.5 | | 6 |
+| component-065 | data_display | 5 | 6.5 | | — |
+
+### Full 100-Prompt Results
+
+| Metric | G (27B + Harness) | V1 raw 27B (critique) |
+|---|---|---|
+| Prompts scored | /100 | 91/100 |
+| Avg score (/10) | ??? | 5.81 |
+| Min / Max | | 4 / 7 |
+| Avg chars | | 8,434 |
+| Avg generation time | | — |
+| Has `<body>` tag | /100 | ~500/500 |
 
 ---
 
-## Known Issues from V2 Testing
+## Known Issues
 
 1. **Pi -p mode gates:** `ctx.ui.confirm` returns false → approval gates auto-reject.
-   On the full tier, `gate-final` has `on_reject: cancel`. The workflow cancels after
-   verify but `index.html` is already written by implement. This is acceptable.
+   `gate-final` uses `on_reject: continue` so rework always runs. This is intentional
+   for batch mode.
 
-2. **detect-tier stderr:** The default case was patched on test/batch-8b-autodl branch
-   (commit 4ffe91f). Make sure your web-design.yaml has this fix.
-
-3. **Extension symlinks:** Pi loads from `~/.pi/agent/extensions/`, not the project dir.
+2. **Extension symlinks:** Pi loads from `~/.pi/agent/extensions/`, not the project dir.
    Must re-link after every rsync.
 
-4. **yaml module hoisting:** Copy `node_modules/yaml` to `extensions/pi-workflows/node_modules/yaml/`.
+3. **yaml module hoisting:** Copy `node_modules/yaml` to `extensions/pi-workflows/node_modules/yaml/`.
 
-5. **reasoning: false in models.json:** Even with thinking ON at server level, Pi's
+4. **reasoning: false in models.json:** Even with thinking ON at server level, Pi's
    reasoning=true wastes output tokens. Always set reasoning: false.
+
+5. **pi-memory ECONNREFUSED on port 8081:** Embedding server not running. Non-critical —
+   memory extension errors don't affect workflow execution.
+
+6. **Timeout:** The 8-node pipeline averages ~9 min per prompt on 27B. Batch script uses
+   15 min timeout. Some complex prompts may still exceed this.
+
+7. **Build on AutoDL:** Must use `--noImplicitAny false` flag when building TypeScript
+   extensions on AutoDL (strict mode errors from missing PI type declarations).
+
+8. **llama-server binary path:** On the current 5090 instance, use
+   `llama-mtp/build/bin/llama-server` not `llama-mtp/bin/llama-server`.

@@ -14,6 +14,7 @@ import os
 import subprocess
 import shutil
 import sys
+import time
 import argparse
 from datetime import datetime
 from pathlib import Path
@@ -81,12 +82,18 @@ def main():
                 continue
 
         print(f"\n=== [{n}/{args.start + total}] {pid} ===")
+        t0 = time.time()
         print(f"Start: {datetime.now().strftime('%H:%M:%S')}")
 
-        # Clean previous index.html
+        # Clean previous index.html and stale workflow artifacts
         index_html = HARNESS_DIR / "index.html"
         if index_html.exists():
             index_html.unlink()
+        artifacts_dir = HARNESS_DIR / ".pi" / "workflow-artifacts"
+        if artifacts_dir.exists():
+            for old in artifacts_dir.iterdir():
+                if old.name.startswith("web-design-benchmark-"):
+                    shutil.rmtree(old, ignore_errors=True)
 
         cmd_input = f"/workflow run web-design-benchmark {prompt}"
         try:
@@ -96,17 +103,17 @@ def main():
                 env=env,
                 capture_output=True,
                 text=True,
-                timeout=600,  # 10 min timeout for full tier
+                timeout=900,  # 15 min — 8-node pipeline averages ~9 min on 27B
             )
         except subprocess.TimeoutExpired:
-            print(f"  TIMEOUT for {pid}")
+            elapsed = time.time() - t0
+            print(f"  TIMEOUT for {pid} ({int(elapsed)}s)")
             fail += 1
             continue
 
         result_dir.mkdir(parents=True, exist_ok=True)
 
         # Save workflow artifacts
-        artifacts_dir = HARNESS_DIR / ".pi" / "workflow-artifacts"
         runs = []
         if artifacts_dir.exists():
             runs = sorted(
@@ -145,7 +152,8 @@ def main():
             print(f"  FAIL: No index.html for {pid}")
             fail += 1
 
-        print(f"  End: {datetime.now().strftime('%H:%M:%S')}")
+        elapsed = time.time() - t0
+        print(f"  End: {datetime.now().strftime('%H:%M:%S')} ({int(elapsed)}s)")
 
     print(f"\n=== Batch complete: {success}/{total} succeeded, {fail} failed ===")
 
