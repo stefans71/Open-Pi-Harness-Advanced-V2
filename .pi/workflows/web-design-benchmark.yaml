@@ -1,0 +1,357 @@
+name: web-design-benchmark
+description: |
+  Benchmark variant of web-design workflow for single-HTML-file component generation.
+  8 nodes: brief → tokens → implement → verify → review → gate-final → rework → verify-rework.
+  Drops scaffold/profile/PRD/inventory/estimate. Targets index.html output.
+  Designed for batch runs with `pi -p` (gates auto-reject with on_reject: continue).
+
+nodes:
+
+  # ── Phase 1 — Design Brief ─────────────────────────────────────────
+
+  - id: brief
+    type: prompt
+    allowed_tools: [read, write]
+    expected_artifacts:
+      - $ARTIFACTS_DIR/brief.md
+    prompt: |
+      You are in the DESIGN BRIEF phase. No code yet.
+
+      User request:
+      $USER_MESSAGE
+
+      Apply the Intent First methodology. Answer all five questions:
+        1. Who is the user and what is their context?
+        2. What is the primary action this UI must enable?
+        3. What does success feel like? (words that exclude alternatives)
+        4. What domain vocabulary does this world use?
+        5. What makes this different from a generic app?
+
+      Then write an Intent Statement:
+        "This [component/screen] helps [who] to [primary action] so they can [outcome].
+        It should feel [adjective]. The user is typically [context/environment].
+        The most important thing to get right is [constraint]."
+
+      Then run Domain Exploration — produce all four:
+        - Domain vocabulary: 5-8 concepts native to this domain
+        - Color world: 5 physical objects or environments → what colors do they suggest?
+        - Signature element: one detail that could only exist in this product
+        - Rejecting: 3 obvious design defaults → what replaces each for this domain
+
+      Finally, specify concrete design decisions:
+        - Color palette: 3-5 hex values with roles (primary, secondary, accent, background, text)
+        - Typography: font stack, heading vs body sizes in px
+        - Layout approach: flexbox/grid, responsive breakpoints
+        - Key interactive states: hover, focus, disabled appearance
+        - Accessibility: contrast targets, semantic HTML elements to use
+
+      Write the full brief to $ARTIFACTS_DIR/brief.md.
+      Do not write any code.
+
+  # ── Phase 2 — Design Tokens ────────────────────────────────────────
+
+  - id: tokens
+    type: prompt
+    fresh_context: true
+    allowed_tools: [read, write]
+    expected_artifacts:
+      - $ARTIFACTS_DIR/design-tokens.md
+    prompt: |
+      You are in the TOKEN SYSTEM phase. You have NO memory of the prior phase.
+
+      Read $ARTIFACTS_DIR/brief.md first.
+
+      Define the complete design token system as CSS custom properties.
+      This will be used inside a single self-contained HTML file, so output
+      everything as a :root block ready to paste into a <style> tag.
+
+      COLOR ARCHITECTURE:
+        - Primary brand (main actions, CTAs)
+        - Secondary (structural elements, headers)
+        - Accent (highlights, ratings, warnings)
+        - Neutrals: ink (text), canvas (card bg), surface (page bg), border
+        - State colors: error, success, warning, info
+
+      NAMING RULE — tokens must evoke the domain, not describe the color:
+        Bad:  --blue-600, --gray-50
+        Good: --turf, --sky, --ink, --canvas
+        Read your variable names out loud — do they belong to this product's world?
+
+      TYPOGRAPHY SCALE:
+        | Token          | Size             | Line-height      | Weight |
+        |----------------|------------------|------------------|--------|
+        | --text-h1      | 2.25rem (36px)   | 2.75rem (44px)   | 700    |
+        | --text-h2      | 1.75rem (28px)   | 2.25rem (36px)   | 700    |
+        | --text-h3      | 1.25rem (20px)   | 1.75rem (28px)   | 600    |
+        | --text-body    | 1rem (16px)      | 1.5rem (24px)    | 400    |
+        | --text-button  | 0.9375rem (15px) | 1.25rem (20px)   | 600    |
+        | --text-caption | 0.875rem (14px)  | 1.25rem (20px)   | 400    |
+
+      SPACING SCALE (8px grid):
+        --space-1: 4px through --space-16: 64px
+
+      MOTION TOKENS:
+        --duration-fast: 150ms, --duration-normal: 200ms, --duration-slow: 300ms
+        --ease-out: cubic-bezier(0, 0, 0.2, 1)
+        --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1)
+
+      ALSO DEFINE:
+        - Touch target: --touch-min: 3rem (48px)
+        - Radius: --radius-sm (8px), --radius-md (12px), --radius-lg (16px), --radius-full (9999px)
+        - Shadows: --shadow-sm, --shadow-md, --shadow-lg
+
+      Write the full token system to $ARTIFACTS_DIR/design-tokens.md.
+      Include the complete :root { } block as a fenced code block so the
+      implement phase can copy it directly.
+
+      Do not write any HTML files. Tokens only.
+
+  # ── Phase 3 — Implement ────────────────────────────────────────────
+
+  - id: implement
+    type: prompt
+    fresh_context: true
+    allowed_tools: [read, write]
+    expected_artifacts:
+      - index.html
+    prompt: |
+      You are in the IMPLEMENTATION phase. You have NO memory of prior phases.
+
+      Read these files first:
+        1. $ARTIFACTS_DIR/brief.md          — design direction and intent
+        2. $ARTIFACTS_DIR/design-tokens.md  — the token system (copy the :root block)
+
+      Now build a SINGLE self-contained HTML file based on the brief and tokens.
+
+      OUTPUT RULES:
+        - Write ONE file: index.html in the current working directory
+        - Start with <!DOCTYPE html>, end with </html>
+        - ALL CSS in a <style> block inside <head>
+        - No external CDN, no Tailwind, no frameworks, no npm packages, no JavaScript frameworks
+        - Minimum 3000 characters of meaningful HTML + CSS
+        - Vanilla JavaScript only where needed for interactivity (show/hide, toggles)
+
+      DESIGN TOKEN USAGE:
+        - Paste the :root { } block from design-tokens.md into your <style>
+        - Use ONLY CSS custom properties for colors, spacing, typography, radius, shadows
+        - Zero hardcoded hex values. Zero hardcoded px sizes outside the token system
+        - Reference tokens as var(--token-name) everywhere
+
+      QUALITY REQUIREMENTS:
+        - Mobile-first: base styles for 375px, @media for tablet (768px) and desktop (1024px)
+        - Hover, focus-visible, and active states on ALL interactive elements
+        - Semantic HTML: use button, nav, main, section, form, label, h1-h6 as appropriate
+        - Touch targets: min-height 48px (var(--touch-min)) on tappable elements
+        - CSS transitions using motion tokens on state changes
+        - 4.5:1 contrast ratio for all text
+        - @media (prefers-reduced-motion: reduce) to disable animations
+
+      STRUCTURE:
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>[Component Name]</title>
+          <style>
+            :root { /* tokens from design-tokens.md */ }
+            /* reset */
+            *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+            /* component styles using var(--token) */
+          </style>
+        </head>
+        <body>
+          <!-- semantic HTML for the component -->
+        </body>
+        </html>
+
+      Write the complete file to index.html. Nothing else.
+
+  # ── Phase 4 — Verify ───────────────────────────────────────────────
+
+  - id: verify
+    type: bash
+    allow_failure: true
+    timeout: 30000
+    command: |
+      REPORT="$ARTIFACTS_DIR/quality-report.md"
+      printf '# Quality Report\nGenerated: %s\n\n' "$(date -u '+%Y-%m-%d %H:%M UTC')" > "$REPORT"
+      PASS=0; FAIL=0; FILE="index.html"
+
+      check() {
+        local name="$1" result="$2"
+        printf '## %s\n' "$name" >> "$REPORT"
+        if [ "$result" = "1" ]; then
+          printf 'PASS\n\n' >> "$REPORT"; PASS=$((PASS+1))
+        else
+          printf 'FAIL\n\n' >> "$REPORT"; FAIL=$((FAIL+1))
+        fi
+      }
+
+      # File exists
+      [ -f "$FILE" ] && check "File exists" 1 || { check "File exists" 0; printf '---\nSummary: 0 passed, 1 failed\n' >> "$REPORT"; echo "FAIL: index.html not found"; exit 1; }
+
+      # Size check (>3000 chars)
+      CHARS=$(wc -c < "$FILE")
+      [ "$CHARS" -gt 3000 ] && check "Size > 3000 chars ($CHARS)" 1 || check "Size > 3000 chars ($CHARS)" 0
+
+      # Has DOCTYPE
+      grep -qi '<!doctype html>' "$FILE" && check "Has DOCTYPE" 1 || check "Has DOCTYPE" 0
+
+      # Has <body>
+      grep -qi '<body' "$FILE" && check "Has <body>" 1 || check "Has <body>" 0
+
+      # Has </html>
+      grep -qi '</html>' "$FILE" && check "Has </html>" 1 || check "Has </html>" 0
+
+      # Has <style> block
+      grep -qi '<style' "$FILE" && check "Has <style> block" 1 || check "Has <style> block" 0
+
+      # Uses CSS custom properties
+      grep -q 'var(--' "$FILE" && check "Uses CSS custom properties" 1 || check "Uses CSS custom properties" 0
+
+      # Has viewport meta
+      grep -q 'viewport' "$FILE" && check "Has viewport meta" 1 || check "Has viewport meta" 0
+
+      # Has @media query (responsive)
+      grep -q '@media' "$FILE" && check "Has @media queries" 1 || check "Has @media queries" 0
+
+      # No external CDN
+      if grep -qi 'cdn\.\|unpkg\.\|jsdelivr\.\|tailwindcss\.\|bootstrap\.' "$FILE"; then
+        check "No external CDN" 0
+      else
+        check "No external CDN" 1
+      fi
+
+      # Has focus-visible
+      grep -q 'focus-visible' "$FILE" && check "Has focus-visible styles" 1 || check "Has focus-visible styles" 0
+
+      # Has hover states
+      grep -q ':hover' "$FILE" && check "Has hover states" 1 || check "Has hover states" 0
+
+      printf '---\nSummary: %d passed, %d failed\n' "$PASS" "$FAIL" >> "$REPORT"
+      echo "Quality: $PASS passed, $FAIL failed ($CHARS chars)"
+
+      # Copy to artifacts for review phase
+      cp "$FILE" "$ARTIFACTS_DIR/index.html"
+
+  # ── Phase 5 — Review ───────────────────────────────────────────────
+
+  - id: review
+    type: prompt
+    fresh_context: true
+    allowed_tools: [read, write]
+    prompt: |
+      You are a hostile senior engineer reviewing a single-file HTML component.
+      Find every shortcoming. Be specific. You have NO memory of prior phases.
+
+      Read in this order:
+        1. $ARTIFACTS_DIR/brief.md            — what was promised
+        2. $ARTIFACTS_DIR/design-tokens.md    — the token system the code must follow
+        3. $ARTIFACTS_DIR/quality-report.md   — automated gate results
+        4. $ARTIFACTS_DIR/index.html          — the actual implementation
+
+      For the component, check:
+
+      DESIGN CONFORMANCE
+        [] Only token values used? No hardcoded hex or arbitrary values?
+        [] Token names match the domain-evocative design system?
+        [] Typography follows defined scale?
+        [] Colors match the brief's palette?
+
+      MOBILE FIRST
+        [] Base styles target mobile (375px)?
+        [] @media breakpoints for tablet (768px) and desktop (1024px)?
+        [] Touch targets >= 48px on interactive elements?
+        [] No horizontal overflow at 375px?
+
+      COMPONENT COMPLETENESS
+        [] All interactive states: default, hover, active, focus-visible, disabled?
+        [] focus-visible styled and not suppressed?
+        [] CSS transitions on state changes using motion tokens?
+        [] @media (prefers-reduced-motion: reduce) present?
+
+      CRAFT
+        [] Squint test: hierarchy clear without reading text?
+        [] Does anything feel specific to this domain vs generic?
+        [] Signature element from the brief present in the implementation?
+
+      ACCESSIBILITY
+        [] Semantic HTML elements used correctly?
+        [] Sufficient color contrast (4.5:1)?
+        [] ARIA labels where needed?
+
+      HTML / CSS QUALITY
+        [] Self-contained — no external dependencies?
+        [] Clean structure — no redundant wrappers?
+        [] CSS custom properties used consistently (no var() mixed with hardcoded)?
+
+      Score each category: PASS / FAIL / WARN.
+
+      Overall score 1-10:
+        10 = production-ready, 7 = acceptable, 5 = needs work, below 5 = reject
+
+      List specific FAIL items with what to fix (line references or CSS selectors).
+
+      Write to $ARTIFACTS_DIR/review-report.md.
+      End with: "RECOMMENDATION: APPROVE (score N/10)" or "RECOMMENDATION: REJECT (score N/10) - [reason]"
+
+  - id: gate-final
+    type: approval
+    capture_response: true
+    on_reject: continue
+    message: |
+      Review at $ARTIFACTS_DIR/review-report.md
+      Quality report at $ARTIFACTS_DIR/quality-report.md
+      APPROVE → done. REJECT → rework addresses FAIL items only.
+
+  # ── Phase 6 — Rework ───────────────────────────────────────────────
+
+  - id: rework
+    type: prompt
+    fresh_context: true
+    allowed_tools: [read, write]
+    prompt: |
+      You are in the REWORK phase. You have NO memory of prior phases.
+
+      Rejection reason: $REJECTION_REASON
+
+      FIRST: check if rework is actually needed.
+        Read $ARTIFACTS_DIR/review-report.md.
+        If $REJECTION_REASON is empty or "[approved]" or score >= 7 with no FAIL items:
+          Write "No rework needed — approved." to $ARTIFACTS_DIR/rework-summary.md
+          Stop immediately. Do not touch index.html.
+
+      IF REWORK IS NEEDED:
+        Read:
+          1. $ARTIFACTS_DIR/review-report.md  — every FAIL item
+          2. $ARTIFACTS_DIR/design-tokens.md  — token values for corrections
+          3. index.html                       — current implementation
+
+        Fix ONLY items marked FAIL. Do not refactor PASS items.
+        Do not restructure the file. Make surgical fixes.
+
+        For each fix, note what changed in $ARTIFACTS_DIR/rework-summary.md:
+          "Fixed: [selector/element] — [what changed]"
+
+        Write the corrected file back to index.html.
+        When done append: "Rework complete. N items fixed."
+
+  # ── Phase 7 — Verify Rework ────────────────────────────────────────
+
+  - id: verify-rework
+    type: bash
+    allow_failure: true
+    timeout: 30000
+    command: |
+      FILE="index.html"
+      if [ ! -f "$FILE" ]; then
+        echo "No index.html — rework may have been skipped (approved)."
+        exit 0
+      fi
+      CHARS=$(wc -c < "$FILE")
+      HAS_BODY=$(grep -cqi '<body' "$FILE" && echo Y || echo N)
+      HAS_TOKENS=$(grep -c 'var(--' "$FILE" || echo 0)
+      HAS_MEDIA=$(grep -c '@media' "$FILE" || echo 0)
+      echo "Final: ${CHARS} chars, body=${HAS_BODY}, token-refs=${HAS_TOKENS}, media-queries=${HAS_MEDIA}"
+      cp "$FILE" "$ARTIFACTS_DIR/index.html"
