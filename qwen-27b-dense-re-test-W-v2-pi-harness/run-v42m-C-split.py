@@ -22,24 +22,17 @@ from pathlib import Path
 
 WORKDIR = Path("/root/autodl-tmp/pi-harness-stable")
 PROMPTS_FILE = WORKDIR / "prompts" / "all-100-prompts.json"
-OUTPUT_DIR = WORKDIR / "condition-M-harness-v42"
+OUTPUT_DIR = WORKDIR / "condition-M-C-harness-v42"
 DICTIONARY = ".pi/ux-production-standards.md"
 TIMEOUT = 1200  # 20 min per pi call (generous)
 MIN_TOKEN_REFS = 5
 
 TEST_IDS = [
-    "component-010-run0",  # RETEST: TY-08 made button text huge (now prompt-aware)
-    "component-002-run0",  # RETEST: tagline between name and price (CP-05 added)
-    "component-003-run0",  # RETEST: hero text not centered
-    "component-008-run0",
-    "component-015-run0",
-    "component-027-run0",
-    "component-035-run0",
-    "component-040-run0",
-    "component-043-run0",
-    "component-044-run0",
-    "component-052-run0",
-    "component-059-run0",
+    "component-002-run0",  # M had no glow, tagline issues
+    "component-003-run0",  # M had centering issue
+    "component-010-run0",  # M had TY-08 regression in L
+    "component-035-run0",  # M Pro column wasn't blue-themed
+    "component-044-run0",  # M layout less intuitive than V1 raw
 ]
 
 PATH = "/root/autodl-tmp/node-v22.15.0-linux-x64/bin:/root/autodl-tmp/bun/bin:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -309,12 +302,20 @@ def run_one(comp_id, prompt_text):
         cwd_index.unlink()
 
     generate_prompt = (
+        f"You are an expert UI/UX designer and senior frontend engineer. "
+        f"You have deep expertise in typography hierarchy, spacing systems, color theory, "
+        f"and production-quality HTML/CSS. You build components that look like they belong "
+        f"on Vercel, Linear, or Stripe — clean, polished, intentional. Every design decision "
+        f"is deliberate: font sizes create clear hierarchy, colors follow the prompt's direction, "
+        f"spacing uses an 8px grid, and interactive states feel tactile. "
+        f"\n\n"
         f"Build this UI component as a single self-contained HTML file. "
         f"Write ONE file: index.html. Start with <!DOCTYPE html>, end with </html>. "
         f"ALL CSS in a <style> block. No external CDN or frameworks. "
         f"Use CSS custom properties (:root) for colors and spacing. "
         f"Build ONLY what is requested — if asked for a single component, build only that component centered on the page. "
         f"Do NOT add extra sections, dashboards, tables, or mock data around it. "
+        f"\n\n"
         f"{prompt_text}"
     )
 

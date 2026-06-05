@@ -22,24 +22,17 @@ from pathlib import Path
 
 WORKDIR = Path("/root/autodl-tmp/pi-harness-stable")
 PROMPTS_FILE = WORKDIR / "prompts" / "all-100-prompts.json"
-OUTPUT_DIR = WORKDIR / "condition-M-harness-v42"
+OUTPUT_DIR = WORKDIR / "condition-M-B-harness-v42"
 DICTIONARY = ".pi/ux-production-standards.md"
 TIMEOUT = 1200  # 20 min per pi call (generous)
 MIN_TOKEN_REFS = 5
 
 TEST_IDS = [
-    "component-010-run0",  # RETEST: TY-08 made button text huge (now prompt-aware)
-    "component-002-run0",  # RETEST: tagline between name and price (CP-05 added)
-    "component-003-run0",  # RETEST: hero text not centered
-    "component-008-run0",
-    "component-015-run0",
-    "component-027-run0",
-    "component-035-run0",
-    "component-040-run0",
-    "component-043-run0",
-    "component-044-run0",
-    "component-052-run0",
-    "component-059-run0",
+    "component-002-run0",  # M had no glow, tagline issues
+    "component-003-run0",  # M had centering issue
+    "component-010-run0",  # M had TY-08 regression in L
+    "component-035-run0",  # M Pro column wasn't blue-themed
+    "component-044-run0",  # M layout less intuitive than V1 raw
 ]
 
 PATH = "/root/autodl-tmp/node-v22.15.0-linux-x64/bin:/root/autodl-tmp/bun/bin:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -200,7 +193,7 @@ def build_fixes_yaml(missing_items):
         "hover_lift": {"id": "CR-05", "css": ":hover { transform: translateY(-1px); }", "instruction": "Add translateY(-1px) on hover for buttons and cards. Pair with shadow expansion."},
         "letter_spacing": {"id": "CR-04", "css": "letter-spacing: -0.02em;", "instruction": "Add negative letter-spacing (-0.02em to -0.04em) on display text >= 32px."},
         "word_break": {"id": "CR-07", "css": "word-break: break-word; overflow-wrap: break-word;", "instruction": "Add word-break: break-word on feature lists and content text."},
-        "display_size": {"id": "TY-08", "css": "font-size: clamp(2.5rem, 5vw, 3.5rem);", "instruction": "The PRICE VALUE ($49, $0, $9) must be >= 48px (3rem). Use clamp(2.5rem, 5vw, 3.5rem). Plan names (Pro, Free, Enterprise) stay SMALL at 18-24px as secondary labels above the price. Do NOT make plan names display-sized — only the dollar amount."},
+        "display_size": {"id": "TY-08", "css": "font-size: clamp(2.5rem, 5vw, 3.5rem);", "instruction": "Hero headlines, prices, and primary numbers must be >= 48px (3rem). Use clamp(2.5rem, 5vw, 3.5rem) for responsive display text. The price/headline must be the visually dominant element on the page."},
         "cta_saturated": {"id": "LS-07", "css": "background: #2563EB; /* saturated blue */", "instruction": "The primary CTA button must use a saturated, high-contrast color — indigo (#5046E5), blue (#2563EB), or green (#059669). Not teal, gray, or pastels. The CTA must visually pop against the background."},
         "visible_shadow": {"id": "VD-05", "css": "box-shadow: 0 4px 6px rgba(0,0,0,0.07), 0 12px 24px rgba(0,0,0,0.09);", "instruction": "Cards must have visible shadow elevation. Shadow spread >= 8px with opacity >= 0.08. The card must be visually distinct from the background at arm's length."},
         "price_flow": {"id": "CP-05", "css": ".plan-name + .price-block { } /* no tagline between */", "instruction": "Pricing card flow: plan name → price → divider → features → CTA. Remove any tagline/description between the plan name and price. Price amount and period must be on the same baseline (display: flex; align-items: baseline). Move tagline below the divider or remove it. Never use <br> for text wrapping."},
@@ -309,12 +302,20 @@ def run_one(comp_id, prompt_text):
         cwd_index.unlink()
 
     generate_prompt = (
+        f"You are an expert UI/UX designer and senior frontend engineer. "
+        f"You have deep expertise in typography hierarchy, spacing systems, color theory, "
+        f"and production-quality HTML/CSS. You build components that look like they belong "
+        f"on Vercel, Linear, or Stripe — clean, polished, intentional. Every design decision "
+        f"is deliberate: font sizes create clear hierarchy, colors follow the prompt's direction, "
+        f"spacing uses an 8px grid, and interactive states feel tactile. "
+        f"\n\n"
         f"Build this UI component as a single self-contained HTML file. "
         f"Write ONE file: index.html. Start with <!DOCTYPE html>, end with </html>. "
         f"ALL CSS in a <style> block. No external CDN or frameworks. "
         f"Use CSS custom properties (:root) for colors and spacing. "
         f"Build ONLY what is requested — if asked for a single component, build only that component centered on the page. "
         f"Do NOT add extra sections, dashboards, tables, or mock data around it. "
+        f"\n\n"
         f"{prompt_text}"
     )
 

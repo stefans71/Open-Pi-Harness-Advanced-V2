@@ -24,7 +24,7 @@
 - **TY-05** Weight Contrast: headings 600–700. Body 400. If everything is same weight, hierarchy is invisible.
 - **TY-06** Font Stack: system font stack or loaded font. Never reference unloaded fonts without explicit fallback.
 - **TY-07** Unit Consistency: all font sizes use same unit (rem or px). Don't mix.
-- **TY-08** Display Size: hero headlines, prices, and primary numbers must be ≥ 48px (3rem). Use `clamp(2.5rem, 5vw, 3.5rem)` for responsive display text. Only applies to components WITH prices, headlines, or hero text — NOT to buttons, nav bars, toolbars, or small components where all text is UI-scale.
+- **TY-08** Display Size: prices and hero headlines must be ≥ 48px (3rem). Use `clamp(2.5rem, 5vw, 3.5rem)` for responsive display text. Only the PRICE VALUE ($49, $0, $9) gets display size — plan names (Pro, Free, Enterprise) stay at 18-24px as secondary labels above the price. Only applies to components WITH prices or hero text — NOT to buttons, nav bars, or toolbars.
 
 ## INTERACTIVE STATES (IS)
 
