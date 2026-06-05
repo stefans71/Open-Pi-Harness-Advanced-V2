@@ -1,0 +1,268 @@
+name: web-design-benchmark-v4
+description: |
+  V4 — Raw-first generation with dictionary context + polish pipeline.
+  The model generates directly from the prompt WITH production standards knowledge.
+  No brief node (no scope corruption, no fact loss). No tokens node (model picks its own palette).
+  Then review + rework polish what the raw model built.
+  6 nodes: generate → verify → dict-lint → review → gate → rework → verify-rework.
+
+nodes:
+
+  # ── Phase 1 — Generate (raw + dictionary context) ──────────────────
+  # The model generates directly from the user's prompt, but with the
+  # UX production standards as system context. It has creative freedom
+  # (like raw) but knows the rules (like dictionary-aware implement).
+  # No brief to rewrite the prompt. No tokens to constrain colors.
+
+  - id: generate
+    type: prompt
+    allowed_tools: [read, write]
+    expected_artifacts:
+      - index.html
+    prompt: |
+      You are a senior frontend engineer building a production UI component.
+
+      FIRST: Read the UX production standards:
+        .pi/ux-production-standards.md
+
+      These are the quality rules you must follow. They cover spacing (8px grid),
+      typography (heading scale, line-height), interactive states (hover, focus,
+      active, disabled on EVERY clickable element), color (WCAG AA contrast),
+      visual depth (multi-layer shadows, consistent radii), animation (reduced
+      motion, GPU-only properties), layout (mobile-first, responsive), component
+      patterns (ARIA tabs, tables), and craft techniques (inline SVG icons,
+      ambient glow, display typography, hover lift, opacity layers).
+
+      NOW BUILD this component:
+      $USER_MESSAGE
+
+      OUTPUT RULES:
+        - Write ONE file: index.html in the current working directory
+        - Start with <!DOCTYPE html>, end with </html>
+        - ALL CSS in a <style> block inside <head>
+        - No external CDN, no Tailwind, no frameworks, no npm packages
+        - Vanilla JavaScript only where needed for interactivity
+        - Use CSS custom properties (:root variables) for colors, spacing, typography
+        - Every color, spacing value, radius, and shadow as a variable
+        - Inline SVG for all icons — never emoji or text characters
+        - System font stack with explicit fallback
+
+      DESIGN APPROACH:
+        - Pick a cohesive color palette that fits the domain (3-5 colors)
+        - Name your CSS variables to evoke the domain, not describe the color
+        - Build mobile-first, add @media breakpoints for tablet and desktop
+        - Every button, link, and interactive element needs: hover, focus-visible, active states
+        - Use multi-layer box-shadow for depth, radial-gradient for ambient glow
+        - Negative letter-spacing on large display text for premium feel
+        - Semantic HTML: article, section, nav, button, ul/li as appropriate
+        - ARIA labels on non-text interactive elements
+
+      Write the complete file to index.html. Make it production-quality.
+
+  # ── Phase 2 — Verify (automated quality gate) ─────────────────────
+
+  - id: verify
+    type: bash
+    allow_failure: true
+    timeout: 30000
+    command: |
+      REPORT="$ARTIFACTS_DIR/quality-report.md"
+      printf '# Quality Report\nGenerated: %s\n\n' "$(date -u '+%Y-%m-%d %H:%M UTC')" > "$REPORT"
+      PASS=0; FAIL=0; FILE="index.html"
+
+      check() {
+        local name="$1" result="$2"
+        printf '## %s\n' "$name" >> "$REPORT"
+        if [ "$result" = "1" ]; then
+          printf 'PASS\n\n' >> "$REPORT"; PASS=$((PASS+1))
+        else
+          printf 'FAIL\n\n' >> "$REPORT"; FAIL=$((FAIL+1))
+        fi
+      }
+
+      [ -f "$FILE" ] && check "File exists" 1 || { check "File exists" 0; printf '---\nSummary: 0 passed, 1 failed\n' >> "$REPORT"; echo "FAIL: index.html not found"; exit 1; }
+      CHARS=$(wc -c < "$FILE")
+      [ "$CHARS" -gt 3000 ] && check "Size > 3000 chars ($CHARS)" 1 || check "Size > 3000 chars ($CHARS)" 0
+      grep -qi '<!doctype html>' "$FILE" && check "Has DOCTYPE" 1 || check "Has DOCTYPE" 0
+      grep -qi '<body' "$FILE" && check "Has <body>" 1 || check "Has <body>" 0
+      grep -qi '</html>' "$FILE" && check "Has </html>" 1 || check "Has </html>" 0
+      grep -qi '<style' "$FILE" && check "Has <style> block" 1 || check "Has <style> block" 0
+      grep -q 'var(--' "$FILE" && check "Uses CSS custom properties" 1 || check "Uses CSS custom properties" 0
+      grep -q 'viewport' "$FILE" && check "Has viewport meta" 1 || check "Has viewport meta" 0
+      grep -q '@media' "$FILE" && check "Has @media queries" 1 || check "Has @media queries" 0
+      if grep -qi 'cdn\.\|unpkg\.\|jsdelivr\.\|tailwindcss\.\|bootstrap\.' "$FILE"; then
+        check "No external CDN" 0
+      else
+        check "No external CDN" 1
+      fi
+      grep -q 'focus-visible' "$FILE" && check "Has focus-visible styles" 1 || check "Has focus-visible styles" 0
+      grep -q ':hover' "$FILE" && check "Has hover states" 1 || check "Has hover states" 0
+      grep -q '<svg' "$FILE" && check "Has inline SVG icons" 1 || check "Has inline SVG icons" 0
+
+      printf '---\nSummary: %d passed, %d failed\n' "$PASS" "$FAIL" >> "$REPORT"
+      echo "Quality: $PASS passed, $FAIL failed ($CHARS chars)"
+      cp "$FILE" "$ARTIFACTS_DIR/index.html"
+
+  # ── Phase 3 — Dictionary Lint (automated standards check) ──────────
+
+  - id: dict-lint
+    type: bash
+    allow_failure: true
+    timeout: 30000
+    command: |
+      FILE="index.html"
+      REPORT="$ARTIFACTS_DIR/dict-lint.md"
+      printf '# Dictionary Lint Report\n\n' > "$REPORT"
+      WARN=0; PASS=0
+
+      lint() {
+        local id="$1" name="$2" result="$3"
+        if [ "$result" = "1" ]; then
+          printf '- **%s** %s: PASS\n' "$id" "$name" >> "$REPORT"
+          PASS=$((PASS+1))
+        else
+          printf '- **%s** %s: WARN\n' "$id" "$name" >> "$REPORT"
+          WARN=$((WARN+1))
+        fi
+      }
+
+      ODDPX=$(grep -oP '\d+px' "$FILE" | grep -vP '^(0|4|8|12|16|24|32|48|64|128|256|9999|44|375|768|1024|1920|1080)px$' | sort -u | head -10)
+      [ -z "$ODDPX" ] && lint "SP-04" "8px grid spacing" 1 || { lint "SP-04" "8px grid spacing" 0; printf '  Off-grid values: %s\n' "$(echo $ODDPX | tr '\n' ', ')" >> "$REPORT"; }
+
+      grep -qP 'line-height:\s*(1\.[5-6]|var\(--)' "$FILE" && lint "TY-02" "Body line-height 1.5-1.6x" 1 || lint "TY-02" "Body line-height 1.5-1.6x" 0
+
+      HOVER_COUNT=$(grep -c ':hover' "$FILE" || echo 0)
+      [ "$HOVER_COUNT" -ge 3 ] && lint "IS-01" "Hover states (${HOVER_COUNT} found)" 1 || lint "IS-01" "Hover states (${HOVER_COUNT} found)" 0
+
+      FOCUS_COUNT=$(grep -c 'focus-visible' "$FILE" || echo 0)
+      [ "$FOCUS_COUNT" -ge 2 ] && lint "IS-02" "Focus-visible (${FOCUS_COUNT} found)" 1 || lint "IS-02" "Focus-visible (${FOCUS_COUNT} found)" 0
+
+      grep -qP 'transition.*\d+ms' "$FILE" && lint "IS-05" "CSS transitions present" 1 || lint "IS-05" "CSS transitions present" 0
+
+      HARDCODED=$(sed -n '/:root/,/^}/!p' "$FILE" | grep -oP '#[0-9a-fA-F]{3,8}' | sort -u | wc -l)
+      [ "$HARDCODED" -le 2 ] && lint "CC-01" "No hardcoded hex outside :root (${HARDCODED} found)" 1 || lint "CC-01" "No hardcoded hex outside :root (${HARDCODED} found)" 0
+
+      grep -q 'prefers-reduced-motion' "$FILE" && lint "AM-03" "Reduced motion media query" 1 || lint "AM-03" "Reduced motion media query" 0
+
+      BP_COUNT=$(grep -cP '@media.*min-width' "$FILE" || echo 0)
+      [ "$BP_COUNT" -ge 2 ] && lint "LS-04" "Responsive breakpoints (${BP_COUNT} found)" 1 || lint "LS-04" "Responsive breakpoints (${BP_COUNT} found)" 0
+
+      grep -q '<svg' "$FILE" && lint "CR-01" "Inline SVG icons" 1 || lint "CR-01" "Inline SVG icons" 0
+
+      TOKEN_REFS=$(grep -c 'var(--' "$FILE" || echo 0)
+      [ "$TOKEN_REFS" -ge 20 ] && lint "TOKENS" "Token density (${TOKEN_REFS} var() refs)" 1 || lint "TOKENS" "Token density (${TOKEN_REFS} var() refs)" 0
+
+      printf '\n---\n%d passed, %d warnings\n' "$PASS" "$WARN" >> "$REPORT"
+      echo "Dict lint: $PASS passed, $WARN warnings"
+
+  # ── Phase 4 — Review (dictionary-structured) ───────────────────────
+
+  - id: review
+    type: prompt
+    fresh_context: true
+    allowed_tools: [read, write]
+    prompt: |
+      You are reviewing a single-file HTML component against the UX Production Standards.
+      Your review is STRUCTURED, not free-form. Every finding cites a rule ID.
+      You have NO memory of prior phases.
+
+      Read in this order:
+        1. .pi/ux-production-standards.md       — the rules you're checking against
+        2. $ARTIFACTS_DIR/quality-report.md     — automated gate results
+        3. $ARTIFACTS_DIR/dict-lint.md          — automated standards lint
+        4. $ARTIFACTS_DIR/index.html            — the implementation
+
+      REVIEW PROCESS:
+
+      For EACH category in the standards (SP, TY, IS, CC, VD, AM, LS, CP, CR):
+        1. Read the rules for that category
+        2. Check the implementation against each rule
+        3. Score: PASS / FAIL / N/A
+        4. For FAIL: cite the rule ID, the CSS selector or line that fails, and the fix
+
+      FORMAT your output as:
+
+      ## SPACING
+      - SP-01 Section Gap: PASS | Sections use 48px gaps ✓
+      - SP-02 Card Padding: FAIL | `.card { padding: 8px }` → needs min 24px
+      ...
+
+      (continue for all 9 categories including CRAFT)
+
+      ## SUMMARY
+      - Total: X PASS, Y FAIL, Z N/A
+      - Critical fixes (FAIL items that most impact user experience, max 10)
+      - Overall score 1-10
+
+      Write to $ARTIFACTS_DIR/review-report.md.
+      End with: "RECOMMENDATION: APPROVE (score N/10)" or "RECOMMENDATION: REJECT (score N/10)"
+
+  - id: gate-final
+    type: approval
+    capture_response: true
+    on_reject: continue
+    message: |
+      Review at $ARTIFACTS_DIR/review-report.md
+      Quality report at $ARTIFACTS_DIR/quality-report.md
+      Dict lint at $ARTIFACTS_DIR/dict-lint.md
+      APPROVE → done. REJECT → rework addresses FAIL items only.
+
+  # ── Phase 5 — Rework (structured by category) ─────────────────────
+
+  - id: rework
+    type: prompt
+    fresh_context: true
+    allowed_tools: [read, write]
+    prompt: |
+      You are in the REWORK phase. You have NO memory of prior phases.
+
+      Rejection reason: $REJECTION_REASON
+
+      FIRST: check if rework is actually needed.
+        Read $ARTIFACTS_DIR/review-report.md.
+        If $REJECTION_REASON is empty or "[approved]" or score >= 8 with no FAIL items:
+          Write "No rework needed — approved." to $ARTIFACTS_DIR/rework-summary.md
+          Stop immediately. Do not touch index.html.
+
+      IF REWORK IS NEEDED:
+        Read:
+          1. $ARTIFACTS_DIR/review-report.md      — every FAIL item with rule IDs
+          2. .pi/ux-production-standards.md       — the rules being violated
+          3. index.html                           — current implementation
+
+        Fix FAIL items IN THIS ORDER (structural before cosmetic):
+
+        PASS 1 — SPACING & LAYOUT (SP-*, LS-*)
+        PASS 2 — TYPOGRAPHY (TY-*)
+        PASS 3 — INTERACTIVE STATES & ANIMATION (IS-*, AM-*)
+        PASS 4 — COLOR & VISUAL DEPTH (CC-*, VD-*)
+        PASS 5 — CRAFT & POLISH (CR-*)
+
+        For each fix, log to $ARTIFACTS_DIR/rework-summary.md:
+          "Pass N — [RULE-ID]: Fixed [selector] — [what changed]"
+
+        Write the corrected file back to index.html.
+        End with: "Rework complete. N items fixed across 5 passes."
+
+  # ── Phase 6 — Verify Rework ────────────────────────────────────────
+
+  - id: verify-rework
+    type: bash
+    allow_failure: true
+    timeout: 30000
+    command: |
+      FILE="index.html"
+      if [ ! -f "$FILE" ]; then
+        echo "No index.html — rework may have been skipped (approved)."
+        exit 0
+      fi
+      CHARS=$(wc -c < "$FILE")
+      HAS_BODY=$(grep -cqi '<body' "$FILE" && echo Y || echo N)
+      HAS_TOKENS=$(grep -c 'var(--' "$FILE" || echo 0)
+      HAS_MEDIA=$(grep -c '@media' "$FILE" || echo 0)
+      HAS_HOVER=$(grep -c ':hover' "$FILE" || echo 0)
+      HAS_FOCUS=$(grep -c 'focus-visible' "$FILE" || echo 0)
+      HAS_MOTION=$(grep -c 'prefers-reduced-motion' "$FILE" || echo 0)
+      HAS_SVG=$(grep -c '<svg' "$FILE" || echo 0)
+      echo "Final: ${CHARS} chars, body=${HAS_BODY}, token-refs=${HAS_TOKENS}, media-queries=${HAS_MEDIA}, hovers=${HAS_HOVER}, focus-visible=${HAS_FOCUS}, reduced-motion=${HAS_MOTION}, svg-icons=${HAS_SVG}"
+      cp "$FILE" "$ARTIFACTS_DIR/index.html"

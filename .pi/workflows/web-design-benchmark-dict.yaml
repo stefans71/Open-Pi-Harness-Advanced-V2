@@ -1,0 +1,440 @@
+name: web-design-benchmark-dict
+description: |
+  Dictionary-enhanced benchmark workflow. Same 8-node structure as web-design-benchmark
+  but with UX production standards injected into implement + review.
+  Hypothesis: measurable rules produce more consistent polish than free-form hostile review.
+  9 nodes: brief → tokens → implement → verify → dict-lint → review → gate → rework → verify-rework.
+
+nodes:
+
+  # ── Phase 1 — Design Brief ─────────────────────────────────────────
+  # Identical to baseline. The brief fills the intent gap.
+
+  - id: brief
+    type: prompt
+    allowed_tools: [read, write]
+    expected_artifacts:
+      - $ARTIFACTS_DIR/brief.md
+    prompt: |
+      You are in the DESIGN BRIEF phase. No code yet.
+
+      User request:
+      $USER_MESSAGE
+
+      Apply the Intent First methodology. Answer all five questions:
+        1. Who is the user and what is their context?
+        2. What is the primary action this UI must enable?
+        3. What does success feel like? (words that exclude alternatives)
+        4. What domain vocabulary does this world use?
+        5. What makes this different from a generic app?
+
+      Then write an Intent Statement:
+        "This [component/screen] helps [who] to [primary action] so they can [outcome].
+        It should feel [adjective]. The user is typically [context/environment].
+        The most important thing to get right is [constraint]."
+
+      Then run Domain Exploration — produce all four:
+        - Domain vocabulary: 5-8 concepts native to this domain
+        - Color world: 5 physical objects or environments → what colors do they suggest?
+        - Signature element: one detail that could only exist in this product
+        - Rejecting: 3 obvious design defaults → what replaces each for this domain
+
+      Finally, specify concrete design decisions:
+        - Color palette: 3-5 hex values with roles (primary, secondary, accent, background, text)
+        - Typography: font stack, heading vs body sizes in px
+        - Layout approach: flexbox/grid, responsive breakpoints
+        - Key interactive states: hover, focus, disabled appearance
+        - Accessibility: contrast targets, semantic HTML elements to use
+
+      Write the full brief to $ARTIFACTS_DIR/brief.md.
+      Do not write any code.
+
+  # ── Phase 2 — Design Tokens ────────────────────────────────────────
+  # Identical to baseline.
+
+  - id: tokens
+    type: prompt
+    fresh_context: true
+    allowed_tools: [read, write]
+    expected_artifacts:
+      - $ARTIFACTS_DIR/design-tokens.md
+    prompt: |
+      You are in the TOKEN SYSTEM phase. You have NO memory of the prior phase.
+
+      Read $ARTIFACTS_DIR/brief.md first.
+
+      Define the complete design token system as CSS custom properties.
+      This will be used inside a single self-contained HTML file, so output
+      everything as a :root block ready to paste into a <style> tag.
+
+      COLOR ARCHITECTURE:
+        - Primary brand (main actions, CTAs)
+        - Secondary (structural elements, headers)
+        - Accent (highlights, ratings, warnings)
+        - Neutrals: ink (text), canvas (card bg), surface (page bg), border
+        - State colors: error, success, warning, info
+
+      NAMING RULE — tokens must evoke the domain, not describe the color:
+        Bad:  --blue-600, --gray-50
+        Good: --turf, --sky, --ink, --canvas
+        Read your variable names out loud — do they belong to this product's world?
+
+      TYPOGRAPHY SCALE:
+        | Token          | Size             | Line-height      | Weight |
+        |----------------|------------------|------------------|--------|
+        | --text-h1      | 2.25rem (36px)   | 2.75rem (44px)   | 700    |
+        | --text-h2      | 1.75rem (28px)   | 2.25rem (36px)   | 700    |
+        | --text-h3      | 1.25rem (20px)   | 1.75rem (28px)   | 600    |
+        | --text-body    | 1rem (16px)      | 1.5rem (24px)    | 400    |
+        | --text-button  | 0.9375rem (15px) | 1.25rem (20px)   | 600    |
+        | --text-caption | 0.875rem (14px)  | 1.25rem (20px)   | 400    |
+
+      SPACING SCALE (8px grid):
+        --space-1: 4px through --space-16: 64px
+
+      MOTION TOKENS:
+        --duration-fast: 150ms, --duration-normal: 200ms, --duration-slow: 300ms
+        --ease-out: cubic-bezier(0, 0, 0.2, 1)
+        --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1)
+
+      ALSO DEFINE:
+        - Touch target: --touch-min: 3rem (48px)
+        - Radius: --radius-sm (8px), --radius-md (12px), --radius-lg (16px), --radius-full (9999px)
+        - Shadows: --shadow-sm, --shadow-md, --shadow-lg
+
+      Write the full token system to $ARTIFACTS_DIR/design-tokens.md.
+      Include the complete :root { } block as a fenced code block so the
+      implement phase can copy it directly.
+
+      Do not write any HTML files. Tokens only.
+
+  # ── Phase 3 — Implement (MODIFIED: dictionary-aware) ───────────────
+  # KEY CHANGE: The implement node now reads the UX production standards
+  # dictionary BEFORE building. This means the model builds to standard
+  # from the start, rather than discovering violations in review.
+
+  - id: implement
+    type: prompt
+    fresh_context: true
+    allowed_tools: [read, write]
+    expected_artifacts:
+      - index.html
+    prompt: |
+      You are in the IMPLEMENTATION phase. You have NO memory of prior phases.
+
+      Read these files in order:
+        1. $ARTIFACTS_DIR/brief.md              — design direction and intent
+        2. $ARTIFACTS_DIR/design-tokens.md      — the token system (copy the :root block)
+        3. .pi/ux-production-standards.md       — UX quality standards you MUST meet
+
+      The standards file contains measurable rules organized by category:
+      spacing (SP), typography (TY), interactive states (IS), color/contrast (CC),
+      visual depth (VD), animation (AM), layout (LS), component patterns (CP).
+
+      BUILD A SINGLE SELF-CONTAINED HTML FILE meeting ALL standards.
+
+      OUTPUT RULES:
+        - Write ONE file: index.html in the current working directory
+        - Start with <!DOCTYPE html>, end with </html>
+        - ALL CSS in a <style> block inside <head>
+        - No external CDN, no Tailwind, no frameworks, no npm packages, no JavaScript frameworks
+        - Minimum 3000 characters of meaningful HTML + CSS
+        - Vanilla JavaScript only where needed for interactivity (show/hide, toggles)
+
+      DESIGN TOKEN USAGE:
+        - Paste the :root { } block from design-tokens.md into your <style>
+        - Use ONLY CSS custom properties for colors, spacing, typography, radius, shadows
+        - Zero hardcoded hex values. Zero hardcoded px sizes outside the token system
+        - Reference tokens as var(--token-name) everywhere
+
+      STANDARDS COMPLIANCE (from ux-production-standards.md):
+        SPACING: Use 8px grid for all spacing. Section gaps 48-64px. Card padding min 24px.
+        TYPOGRAPHY: Heading scale 1.25-2x between levels. Body line-height 1.5x. Max 75ch width.
+        INTERACTIVE: Hover on every clickable element. focus-visible on everything. Active state on buttons. Transitions 150-200ms ease-out.
+        COLOR: 4.5:1 contrast. Max 3 accent colors. Never color alone for meaning.
+        DEPTH: Consistent shadow system. Consistent border-radius (2-3 values max).
+        ANIMATION: @media (prefers-reduced-motion: reduce). Enter = fade+slide 200-300ms. Only animate transform/opacity.
+        LAYOUT: Mobile-first (375px base). @media for 768px and 1024px. Primary content above fold.
+        COMPONENTS: Tables with alt rows or dividers. Tabs with ARIA + working panels. Active nav distinct.
+
+      STRUCTURE:
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>[Component Name]</title>
+          <style>
+            :root { /* tokens from design-tokens.md */ }
+            *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+            @media (prefers-reduced-motion: reduce) {
+              *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+            }
+            /* component styles using var(--token) */
+          </style>
+        </head>
+        <body>
+          <!-- semantic HTML -->
+        </body>
+        </html>
+
+      Write the complete file to index.html. Nothing else.
+
+  # ── Phase 4 — Verify (same as baseline) ────────────────────────────
+
+  - id: verify
+    type: bash
+    allow_failure: true
+    timeout: 30000
+    command: |
+      REPORT="$ARTIFACTS_DIR/quality-report.md"
+      printf '# Quality Report\nGenerated: %s\n\n' "$(date -u '+%Y-%m-%d %H:%M UTC')" > "$REPORT"
+      PASS=0; FAIL=0; FILE="index.html"
+
+      check() {
+        local name="$1" result="$2"
+        printf '## %s\n' "$name" >> "$REPORT"
+        if [ "$result" = "1" ]; then
+          printf 'PASS\n\n' >> "$REPORT"; PASS=$((PASS+1))
+        else
+          printf 'FAIL\n\n' >> "$REPORT"; FAIL=$((FAIL+1))
+        fi
+      }
+
+      [ -f "$FILE" ] && check "File exists" 1 || { check "File exists" 0; printf '---\nSummary: 0 passed, 1 failed\n' >> "$REPORT"; echo "FAIL: index.html not found"; exit 1; }
+      CHARS=$(wc -c < "$FILE")
+      [ "$CHARS" -gt 3000 ] && check "Size > 3000 chars ($CHARS)" 1 || check "Size > 3000 chars ($CHARS)" 0
+      grep -qi '<!doctype html>' "$FILE" && check "Has DOCTYPE" 1 || check "Has DOCTYPE" 0
+      grep -qi '<body' "$FILE" && check "Has <body>" 1 || check "Has <body>" 0
+      grep -qi '</html>' "$FILE" && check "Has </html>" 1 || check "Has </html>" 0
+      grep -qi '<style' "$FILE" && check "Has <style> block" 1 || check "Has <style> block" 0
+      grep -q 'var(--' "$FILE" && check "Uses CSS custom properties" 1 || check "Uses CSS custom properties" 0
+      grep -q 'viewport' "$FILE" && check "Has viewport meta" 1 || check "Has viewport meta" 0
+      grep -q '@media' "$FILE" && check "Has @media queries" 1 || check "Has @media queries" 0
+      if grep -qi 'cdn\.\|unpkg\.\|jsdelivr\.\|tailwindcss\.\|bootstrap\.' "$FILE"; then
+        check "No external CDN" 0
+      else
+        check "No external CDN" 1
+      fi
+      grep -q 'focus-visible' "$FILE" && check "Has focus-visible styles" 1 || check "Has focus-visible styles" 0
+      grep -q ':hover' "$FILE" && check "Has hover states" 1 || check "Has hover states" 0
+
+      printf '---\nSummary: %d passed, %d failed\n' "$PASS" "$FAIL" >> "$REPORT"
+      echo "Quality: $PASS passed, $FAIL failed ($CHARS chars)"
+      cp "$FILE" "$ARTIFACTS_DIR/index.html"
+
+  # ── Phase 4.5 — Dictionary Lint (NEW: automated standards check) ───
+  # Bash-based static analysis. Catches measurable violations without
+  # burning an LLM call. Feeds specific findings into the review node.
+
+  - id: dict-lint
+    type: bash
+    allow_failure: true
+    timeout: 30000
+    command: |
+      FILE="index.html"
+      REPORT="$ARTIFACTS_DIR/dict-lint.md"
+      printf '# Dictionary Lint Report\n\n' > "$REPORT"
+      WARN=0; PASS=0
+
+      lint() {
+        local id="$1" name="$2" result="$3"
+        if [ "$result" = "1" ]; then
+          printf '- **%s** %s: PASS\n' "$id" "$name" >> "$REPORT"
+          PASS=$((PASS+1))
+        else
+          printf '- **%s** %s: WARN\n' "$id" "$name" >> "$REPORT"
+          WARN=$((WARN+1))
+        fi
+      }
+
+      # SP-04: Check for non-8px-grid values (common offenders)
+      ODDPX=$(grep -oP '\d+px' "$FILE" | grep -vP '^(0|4|8|12|16|24|32|48|64|128|256|9999|44|375|768|1024|1920|1080|375)px$' | sort -u | head -10)
+      [ -z "$ODDPX" ] && lint "SP-04" "8px grid spacing" 1 || { lint "SP-04" "8px grid spacing" 0; printf '  Off-grid values: %s\n' "$(echo $ODDPX | tr '\n' ', ')" >> "$REPORT"; }
+
+      # TY-02: Body line-height check
+      grep -qP 'line-height:\s*(1\.[5-6]|var\(--)' "$FILE" && lint "TY-02" "Body line-height 1.5-1.6x" 1 || lint "TY-02" "Body line-height 1.5-1.6x" 0
+
+      # IS-01: Hover states exist
+      HOVER_COUNT=$(grep -c ':hover' "$FILE" || echo 0)
+      [ "$HOVER_COUNT" -ge 3 ] && lint "IS-01" "Hover states (${HOVER_COUNT} found)" 1 || lint "IS-01" "Hover states (${HOVER_COUNT} found)" 0
+
+      # IS-02: focus-visible exists
+      FOCUS_COUNT=$(grep -c 'focus-visible' "$FILE" || echo 0)
+      [ "$FOCUS_COUNT" -ge 2 ] && lint "IS-02" "Focus-visible (${FOCUS_COUNT} found)" 1 || lint "IS-02" "Focus-visible (${FOCUS_COUNT} found)" 0
+
+      # IS-05: Transition timing
+      grep -qP 'transition.*\d+ms' "$FILE" && lint "IS-05" "CSS transitions present" 1 || lint "IS-05" "CSS transitions present" 0
+
+      # CC-01: Hardcoded hex values (outside :root)
+      # Count hex values NOT inside :root block
+      HARDCODED=$(sed -n '/:root/,/^}/!p' "$FILE" | grep -oP '#[0-9a-fA-F]{3,8}' | sort -u | wc -l)
+      [ "$HARDCODED" -le 2 ] && lint "CC-01" "No hardcoded hex outside :root (${HARDCODED} found)" 1 || lint "CC-01" "No hardcoded hex outside :root (${HARDCODED} found)" 0
+
+      # AM-03: Reduced motion
+      grep -q 'prefers-reduced-motion' "$FILE" && lint "AM-03" "Reduced motion media query" 1 || lint "AM-03" "Reduced motion media query" 0
+
+      # LS-04: Responsive breakpoints
+      BP_COUNT=$(grep -cP '@media.*min-width' "$FILE" || echo 0)
+      [ "$BP_COUNT" -ge 2 ] && lint "LS-04" "Responsive breakpoints (${BP_COUNT} found)" 1 || lint "LS-04" "Responsive breakpoints (${BP_COUNT} found)" 0
+
+      # CP-02: Tab ARIA
+      grep -q 'role="tablist"' "$FILE" && lint "CP-02" "Tab ARIA (tablist)" 1 || lint "CP-02" "Tab ARIA (tablist)" 0
+      grep -q 'role="tabpanel"' "$FILE" && lint "CP-02b" "Tab ARIA (tabpanel)" 1 || lint "CP-02b" "Tab ARIA (tabpanel)" 0
+
+      # VD-04: Border-radius consistency
+      RADII=$(grep -oP 'border-radius:\s*\K[^;]+' "$FILE" | sed 's/var([^)]*)/TOKEN/g' | sort -u | wc -l)
+      [ "$RADII" -le 4 ] && lint "VD-04" "Consistent border-radius (${RADII} unique values)" 1 || lint "VD-04" "Consistent border-radius (${RADII} unique values)" 0
+
+      # Token usage density
+      TOKEN_REFS=$(grep -c 'var(--' "$FILE" || echo 0)
+      [ "$TOKEN_REFS" -ge 30 ] && lint "TOKENS" "Token density (${TOKEN_REFS} var() refs)" 1 || lint "TOKENS" "Token density (${TOKEN_REFS} var() refs)" 0
+
+      printf '\n---\n%d passed, %d warnings\n' "$PASS" "$WARN" >> "$REPORT"
+      echo "Dict lint: $PASS passed, $WARN warnings"
+
+  # ── Phase 5 — Review (MODIFIED: dictionary-structured) ─────────────
+  # KEY CHANGE: Instead of free-form "hostile senior engineer," the review
+  # uses the dictionary rule IDs as a checklist. Each finding cites a rule.
+  # This makes review objective and rework surgical.
+
+  - id: review
+    type: prompt
+    fresh_context: true
+    allowed_tools: [read, write]
+    prompt: |
+      You are reviewing a single-file HTML component against the UX Production Standards.
+      Your review is STRUCTURED, not free-form. Every finding cites a rule ID.
+      You have NO memory of prior phases.
+
+      Read in this order:
+        1. .pi/ux-production-standards.md       — the rules you're checking against
+        2. $ARTIFACTS_DIR/brief.md              — what was promised
+        3. $ARTIFACTS_DIR/design-tokens.md      — the token system
+        4. $ARTIFACTS_DIR/quality-report.md     — automated gate results
+        5. $ARTIFACTS_DIR/dict-lint.md          — automated standards lint
+        6. $ARTIFACTS_DIR/index.html            — the implementation
+
+      REVIEW PROCESS:
+
+      For EACH category in the standards (SP, TY, IS, CC, VD, AM, LS, CP):
+        1. Read the rules for that category
+        2. Check the implementation against each rule
+        3. Score: PASS / FAIL / N/A
+        4. For FAIL: cite the rule ID, the CSS selector or line that fails, and the fix
+
+      FORMAT your output as:
+
+      ## SPACING
+      - SP-01 Section Gap: PASS | Sections use var(--space-12) = 48px ✓
+      - SP-02 Card Padding: FAIL | `.stat-card { padding: 8px }` → needs min 24px, use var(--space-6)
+      ...
+
+      ## TYPOGRAPHY
+      - TY-01 Heading Scale: PASS | H1=36px, H2=28px, ratio 1.29 ✓
+      ...
+
+      (continue for all 8 categories)
+
+      After all categories, write:
+
+      ## DESIGN CONFORMANCE
+      - Does the output match the brief's intent and domain vocabulary?
+      - Are token names domain-evocative?
+      - Is the signature element present?
+      Score: PASS / FAIL with specifics.
+
+      ## SUMMARY
+      - Total: X PASS, Y FAIL, Z N/A
+      - Critical fixes (FAIL items that most impact user experience, max 10)
+      - Overall score 1-10
+
+      Write to $ARTIFACTS_DIR/review-report.md.
+      End with: "RECOMMENDATION: APPROVE (score N/10)" or "RECOMMENDATION: REJECT (score N/10)"
+
+  - id: gate-final
+    type: approval
+    capture_response: true
+    on_reject: continue
+    message: |
+      Review at $ARTIFACTS_DIR/review-report.md
+      Quality report at $ARTIFACTS_DIR/quality-report.md
+      Dict lint at $ARTIFACTS_DIR/dict-lint.md
+      APPROVE → done. REJECT → rework addresses FAIL items only.
+
+  # ── Phase 6 — Rework (MODIFIED: structured by category) ────────────
+  # KEY CHANGE: Rework fixes by dictionary category order:
+  # 1. Spacing & Layout (structural foundation)
+  # 2. Typography (readability)
+  # 3. Interactive states & Animation (behavior)
+  # 4. Color & Visual depth (polish)
+  # This prevents later fixes from undoing earlier ones.
+
+  - id: rework
+    type: prompt
+    fresh_context: true
+    allowed_tools: [read, write]
+    prompt: |
+      You are in the REWORK phase. You have NO memory of prior phases.
+
+      Rejection reason: $REJECTION_REASON
+
+      FIRST: check if rework is actually needed.
+        Read $ARTIFACTS_DIR/review-report.md.
+        If $REJECTION_REASON is empty or "[approved]" or score >= 8 with no FAIL items:
+          Write "No rework needed — approved." to $ARTIFACTS_DIR/rework-summary.md
+          Stop immediately. Do not touch index.html.
+
+      IF REWORK IS NEEDED:
+        Read:
+          1. $ARTIFACTS_DIR/review-report.md      — every FAIL item with rule IDs
+          2. .pi/ux-production-standards.md       — the rules being violated
+          3. $ARTIFACTS_DIR/design-tokens.md      — token values for corrections
+          4. index.html                           — current implementation
+
+        Fix FAIL items IN THIS ORDER (structural before cosmetic):
+
+        PASS 1 — SPACING & LAYOUT (SP-*, LS-*)
+          Fix section gaps, card padding, grid alignment, responsive breakpoints.
+          These are structural — changing them can shift everything else.
+
+        PASS 2 — TYPOGRAPHY (TY-*)
+          Fix heading scale, line-heights, font weights, max line widths.
+          Do this after layout so text reflows correctly.
+
+        PASS 3 — INTERACTIVE STATES & ANIMATION (IS-*, AM-*)
+          Add missing hover/focus/active/disabled states.
+          Add transitions and reduced-motion media query.
+          These are additive — they don't move existing elements.
+
+        PASS 4 — COLOR & VISUAL DEPTH (CC-*, VD-*)
+          Replace hardcoded hex with tokens. Fix contrast. Fix shadows/radii.
+          Do this last so you're not repainting things that moved in pass 1.
+
+        For each fix, log to $ARTIFACTS_DIR/rework-summary.md:
+          "Pass N — [RULE-ID]: Fixed [selector] — [what changed]"
+
+        Write the corrected file back to index.html.
+        End with: "Rework complete. N items fixed across 4 passes."
+
+  # ── Phase 7 — Verify Rework ────────────────────────────────────────
+
+  - id: verify-rework
+    type: bash
+    allow_failure: true
+    timeout: 30000
+    command: |
+      FILE="index.html"
+      if [ ! -f "$FILE" ]; then
+        echo "No index.html — rework may have been skipped (approved)."
+        exit 0
+      fi
+      CHARS=$(wc -c < "$FILE")
+      HAS_BODY=$(grep -cqi '<body' "$FILE" && echo Y || echo N)
+      HAS_TOKENS=$(grep -c 'var(--' "$FILE" || echo 0)
+      HAS_MEDIA=$(grep -c '@media' "$FILE" || echo 0)
+      HAS_HOVER=$(grep -c ':hover' "$FILE" || echo 0)
+      HAS_FOCUS=$(grep -c 'focus-visible' "$FILE" || echo 0)
+      HAS_MOTION=$(grep -c 'prefers-reduced-motion' "$FILE" || echo 0)
+      echo "Final: ${CHARS} chars, body=${HAS_BODY}, token-refs=${HAS_TOKENS}, media-queries=${HAS_MEDIA}, hovers=${HAS_HOVER}, focus-visible=${HAS_FOCUS}, reduced-motion=${HAS_MOTION}"
+      cp "$FILE" "$ARTIFACTS_DIR/index.html"

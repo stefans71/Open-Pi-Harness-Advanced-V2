@@ -1,0 +1,277 @@
+name: web-design-benchmark-v41
+description: |
+  V4.1 — Raw generate + dictionary polish in separate sessions.
+  Phase 1: Model generates from prompt ONLY (no dictionary, no constraints).
+  Phase 2: Fresh session reads the HTML + dictionary and polishes it.
+  Then review + rework for final quality.
+  8 nodes: generate-raw → verify → polish → verify-polish → dict-lint → review → gate → rework → verify-rework.
+
+nodes:
+
+  # ── Phase 1 — Raw Generate (prompt only, NO dictionary) ────────────
+  # Let the model do what it does naturally — build creative, focused
+  # output from the prompt. No dictionary to cause scope expansion.
+
+  - id: generate-raw
+    type: prompt
+    allowed_tools: [read, write]
+    expected_artifacts:
+      - index.html
+    prompt: |
+      Build this UI component as a single self-contained HTML file:
+
+      $USER_MESSAGE
+
+      OUTPUT RULES:
+        - Write ONE file: index.html in the current working directory
+        - Start with <!DOCTYPE html>, end with </html>
+        - ALL CSS in a <style> block inside <head>
+        - No external CDN, no Tailwind, no frameworks, no npm packages
+        - Vanilla JavaScript only where needed for interactivity
+        - Use CSS custom properties (:root variables) for colors and spacing
+        - System font stack
+
+      Build ONLY what was requested. If the prompt asks for a single component
+      (button, card, nav bar, modal), build that one component centered on the
+      page — do not add extra sections, tables, dashboards, or mock data around it.
+
+      Write the complete file to index.html.
+
+  # ── Phase 2 — Verify Raw Output ────────────────────────────────────
+
+  - id: verify-raw
+    type: bash
+    allow_failure: true
+    timeout: 30000
+    command: |
+      FILE="index.html"
+      if [ ! -f "$FILE" ]; then echo "FAIL: no index.html"; exit 1; fi
+      CHARS=$(wc -c < "$FILE")
+      echo "Raw output: ${CHARS} chars"
+      cp "$FILE" "$ARTIFACTS_DIR/raw-output.html"
+      # DELETE index.html so polish node MUST create a new one
+      rm "$FILE"
+      echo "Removed index.html — polish must recreate it"
+
+  # ── Phase 3 — Dictionary Polish (fresh context) ────────────────────
+  # New session reads the raw HTML + dictionary. Adds production quality
+  # WITHOUT changing the structure or scope. This is the key separation:
+  # generate = creative freedom, polish = production knowledge.
+
+  - id: polish
+    type: prompt
+    fresh_context: true
+    allowed_tools: [read, write]
+    expected_artifacts:
+      - index.html
+    prompt: |
+      You are a senior frontend engineer. Your job is to take a working
+      component and REWRITE it to production quality. You have NO memory
+      of how it was built.
+
+      FIRST read the production standards:
+        .pi/ux-production-standards.md
+
+      THEN read the raw draft implementation:
+        $ARTIFACTS_DIR/raw-output.html
+
+      Now REWRITE index.html with ALL of the following applied. Every item
+      on this list MUST be present in your output — do not skip any because
+      the original "looks fine." The original is a draft. Your output is production.
+
+      YOU MUST ADD ALL OF THESE (non-negotiable):
+
+      TOKENS & NAMING:
+        - All colors, spacing, radii, shadows as CSS custom properties in :root
+        - Variable names evoke the domain (--shipfast, --deploy, --surface — not --blue-600)
+        - 8px spacing grid: all spacing from {4, 8, 12, 16, 24, 32, 48, 64}px
+
+      INTERACTIVE STATES (every clickable element MUST have ALL of these):
+        - :hover with visible change + transition 150ms ease-out
+        - :focus-visible with 2px outline, high contrast, 2px offset
+        - :active with scale(0.97-0.98) or darken
+        - :disabled with opacity 0.4, cursor: not-allowed
+        - cursor: pointer on all clickable elements
+
+      CRAFT TECHNIQUES:
+        - Replace ALL emoji/text checkmarks (✓ ✗ → ★) with inline <svg> icons
+        - Multi-layer box-shadow: ambient + direct + edge highlight (3 shadows stacked)
+        - Negative letter-spacing (-0.02 to -0.04em) on text ≥32px
+        - translateY(-1px) hover lift on buttons and cards
+        - rgba() for borders instead of flat hex
+        - word-break: break-word on feature/content text
+
+      ACCESSIBILITY & RESPONSIVE:
+        - @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }
+        - @media breakpoints for 768px and 1024px
+        - aria-label on icon-only buttons and non-text interactive elements
+        - Semantic HTML: article, section, nav, button, ul/li as appropriate
+
+      WHAT NOT TO CHANGE:
+        - Keep the same layout structure, sections, and scope
+        - Keep all text content, labels, prices, feature names exactly as-is
+        - Keep the same color scheme direction (light stays light, dark stays dark)
+        - Do NOT add new sections, pages, tables, or mock data
+
+      Write the COMPLETE rewritten file to index.html. The file must be larger
+      and more detailed than the input — you are adding code, not removing it.
+
+  # ── Phase 4 — Verify Polish ────────────────────────────────────────
+
+  - id: verify-polish
+    type: bash
+    allow_failure: true
+    timeout: 30000
+    command: |
+      REPORT="$ARTIFACTS_DIR/quality-report.md"
+      printf '# Quality Report\nGenerated: %s\n\n' "$(date -u '+%Y-%m-%d %H:%M UTC')" > "$REPORT"
+      PASS=0; FAIL=0; FILE="index.html"
+
+      check() {
+        local name="$1" result="$2"
+        printf '## %s\n' "$name" >> "$REPORT"
+        if [ "$result" = "1" ]; then
+          printf 'PASS\n\n' >> "$REPORT"; PASS=$((PASS+1))
+        else
+          printf 'FAIL\n\n' >> "$REPORT"; FAIL=$((FAIL+1))
+        fi
+      }
+
+      [ -f "$FILE" ] && check "File exists" 1 || { check "File exists" 0; printf '---\nSummary: 0 passed, 1 failed\n' >> "$REPORT"; echo "FAIL: index.html not found"; exit 1; }
+      CHARS=$(wc -c < "$FILE")
+      RAW_CHARS=$(wc -c < "$ARTIFACTS_DIR/raw-output.html" 2>/dev/null || echo 0)
+      [ "$CHARS" -gt 3000 ] && check "Size > 3000 chars ($CHARS, raw was $RAW_CHARS)" 1 || check "Size > 3000 chars ($CHARS)" 0
+      grep -qi '<!doctype html>' "$FILE" && check "Has DOCTYPE" 1 || check "Has DOCTYPE" 0
+      grep -q 'var(--' "$FILE" && check "Uses CSS custom properties" 1 || check "Uses CSS custom properties" 0
+      grep -q 'viewport' "$FILE" && check "Has viewport meta" 1 || check "Has viewport meta" 0
+      grep -q '@media' "$FILE" && check "Has @media queries" 1 || check "Has @media queries" 0
+      grep -q 'focus-visible' "$FILE" && check "Has focus-visible styles" 1 || check "Has focus-visible styles" 0
+      grep -q ':hover' "$FILE" && check "Has hover states" 1 || check "Has hover states" 0
+      grep -q '<svg' "$FILE" && check "Has inline SVG icons" 1 || check "Has inline SVG icons" 0
+      grep -q 'prefers-reduced-motion' "$FILE" && check "Has reduced-motion" 1 || check "Has reduced-motion" 0
+
+      printf '---\nSummary: %d passed, %d failed\n' "$PASS" "$FAIL" >> "$REPORT"
+      echo "Quality: $PASS passed, $FAIL failed ($CHARS chars, raw was $RAW_CHARS)"
+      cp "$FILE" "$ARTIFACTS_DIR/index.html"
+
+  # ── Phase 5 — Dictionary Lint ──────────────────────────────────────
+
+  - id: dict-lint
+    type: bash
+    allow_failure: true
+    timeout: 30000
+    command: |
+      FILE="index.html"
+      REPORT="$ARTIFACTS_DIR/dict-lint.md"
+      printf '# Dictionary Lint Report\n\n' > "$REPORT"
+      WARN=0; PASS=0
+
+      lint() {
+        local id="$1" name="$2" result="$3"
+        if [ "$result" = "1" ]; then
+          printf '- **%s** %s: PASS\n' "$id" "$name" >> "$REPORT"
+          PASS=$((PASS+1))
+        else
+          printf '- **%s** %s: WARN\n' "$id" "$name" >> "$REPORT"
+          WARN=$((WARN+1))
+        fi
+      }
+
+      HOVER_COUNT=$(grep -c ':hover' "$FILE" || echo 0)
+      [ "$HOVER_COUNT" -ge 3 ] && lint "IS-01" "Hover states (${HOVER_COUNT})" 1 || lint "IS-01" "Hover states (${HOVER_COUNT})" 0
+      FOCUS_COUNT=$(grep -c 'focus-visible' "$FILE" || echo 0)
+      [ "$FOCUS_COUNT" -ge 2 ] && lint "IS-02" "Focus-visible (${FOCUS_COUNT})" 1 || lint "IS-02" "Focus-visible (${FOCUS_COUNT})" 0
+      grep -qP 'transition.*\d+ms' "$FILE" && lint "IS-05" "Transitions" 1 || lint "IS-05" "Transitions" 0
+      grep -q 'prefers-reduced-motion' "$FILE" && lint "AM-03" "Reduced motion" 1 || lint "AM-03" "Reduced motion" 0
+      grep -q '<svg' "$FILE" && lint "CR-01" "SVG icons" 1 || lint "CR-01" "SVG icons" 0
+      TOKEN_REFS=$(grep -c 'var(--' "$FILE" || echo 0)
+      [ "$TOKEN_REFS" -ge 15 ] && lint "TOKENS" "Token density (${TOKEN_REFS})" 1 || lint "TOKENS" "Token density (${TOKEN_REFS})" 0
+
+      printf '\n---\n%d passed, %d warnings\n' "$PASS" "$WARN" >> "$REPORT"
+      echo "Dict lint: $PASS passed, $WARN warnings"
+
+  # ── Phase 6 — Review ───────────────────────────────────────────────
+
+  - id: review
+    type: prompt
+    fresh_context: true
+    allowed_tools: [read, write]
+    prompt: |
+      You are reviewing a single-file HTML component against the UX Production Standards.
+      Your review is STRUCTURED, not free-form. Every finding cites a rule ID.
+      You have NO memory of prior phases.
+
+      Read in this order:
+        1. .pi/ux-production-standards.md       — the rules
+        2. $ARTIFACTS_DIR/quality-report.md     — automated gate
+        3. $ARTIFACTS_DIR/dict-lint.md          — automated lint
+        4. $ARTIFACTS_DIR/index.html            — the implementation
+
+      For EACH category (SP, TY, IS, CC, VD, AM, LS, CP, CR):
+        Score: PASS / FAIL / N/A
+        For FAIL: cite rule ID, CSS selector, and fix
+
+      ## SUMMARY
+      - Total: X PASS, Y FAIL, Z N/A
+      - Critical fixes (max 10)
+      - Overall score 1-10
+
+      Write to $ARTIFACTS_DIR/review-report.md.
+      End with: "RECOMMENDATION: APPROVE (score N/10)" or "RECOMMENDATION: REJECT (score N/10)"
+
+  - id: gate-final
+    type: approval
+    capture_response: true
+    on_reject: continue
+    message: |
+      Review at $ARTIFACTS_DIR/review-report.md
+      APPROVE → done. REJECT → rework FAIL items only.
+
+  # ── Phase 7 — Rework ───────────────────────────────────────────────
+
+  - id: rework
+    type: prompt
+    fresh_context: true
+    allowed_tools: [read, write]
+    prompt: |
+      You are in the REWORK phase. You have NO memory of prior phases.
+
+      Rejection reason: $REJECTION_REASON
+
+      FIRST: check if rework is needed.
+        Read $ARTIFACTS_DIR/review-report.md.
+        If score >= 8 with no FAIL items:
+          Write "No rework needed." to $ARTIFACTS_DIR/rework-summary.md
+          Stop. Do not touch index.html.
+
+      IF REWORK IS NEEDED:
+        Read:
+          1. $ARTIFACTS_DIR/review-report.md
+          2. .pi/ux-production-standards.md
+          3. index.html
+
+        Fix FAIL items only. Do NOT add new sections or change scope.
+
+        Order: spacing → typography → interactive → color → craft
+
+        Log fixes to $ARTIFACTS_DIR/rework-summary.md.
+        Write corrected file to index.html.
+
+  # ── Phase 8 — Verify Rework ────────────────────────────────────────
+
+  - id: verify-rework
+    type: bash
+    allow_failure: true
+    timeout: 30000
+    command: |
+      FILE="index.html"
+      if [ ! -f "$FILE" ]; then
+        echo "No index.html — rework may have been skipped."
+        exit 0
+      fi
+      CHARS=$(wc -c < "$FILE")
+      HAS_TOKENS=$(grep -c 'var(--' "$FILE" || echo 0)
+      HAS_HOVER=$(grep -c ':hover' "$FILE" || echo 0)
+      HAS_SVG=$(grep -c '<svg' "$FILE" || echo 0)
+      echo "Final: ${CHARS} chars, tokens=${HAS_TOKENS}, hovers=${HAS_HOVER}, svgs=${HAS_SVG}"
+      cp "$FILE" "$ARTIFACTS_DIR/index.html"
